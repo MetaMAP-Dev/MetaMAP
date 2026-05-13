@@ -580,13 +580,13 @@
     "C:\\Users\\ilker\\.nuget\\packages\\": {}
   },
   "project": {
-    "version": "0.0.56",
+    "version": "0.0.57",
     "restore": {
-      "projectUniqueName": "C:\\Users\\ilker\\Desktop\\MetaMAP\\MetaMAP.csproj",
+      "projectUniqueName": "D:\\GithubProjects\\MetaMAP\\MetaMAP.csproj",
       "projectName": "MetaMAP",
-      "projectPath": "C:\\Users\\ilker\\Desktop\\MetaMAP\\MetaMAP.csproj",
+      "projectPath": "D:\\GithubProjects\\MetaMAP\\MetaMAP.csproj",
       "packagesPath": "C:\\Users\\ilker\\.nuget\\packages\\",
-      "outputPath": "C:\\Users\\ilker\\Desktop\\MetaMAP\\obj\\",
+      "outputPath": "D:\\GithubProjects\\MetaMAP\\obj\\",
       "projectStyle": "PackageReference",
       "crossTargeting": true,
       "configFilePaths": [
@@ -670,7 +670,7 @@
             "privateAssets": "none"
           }
         },
-        "runtimeIdentifierGraphPath": "C:\\Program Files\\dotnet\\sdk\\9.0.308/PortableRuntimeIdentifierGraph.json"
+        "runtimeIdentifierGraphPath": "C:\\Program Files\\dotnet\\sdk\\9.0.311/PortableRuntimeIdentifierGraph.json"
       }
     }
   }

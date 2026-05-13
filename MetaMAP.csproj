@@ -13,9 +13,9 @@
         <Keyword3>analysis</Keyword3>
         <NeutralLanguage>en-US</NeutralLanguage>
         <PackageIcon>Resources\MetaBuilding.png</PackageIcon>
-        <Version>0.0.56</Version>
-        <AssemblyVersion>0.0.56</AssemblyVersion>
-        <FileVersion>0.0.56</FileVersion>
+        <Version>0.0.57</Version>
+        <AssemblyVersion>0.0.57</AssemblyVersion>
+        <FileVersion>0.0.57</FileVersion>
         <LangVersion>12</LangVersion>
     </PropertyGroup>
 

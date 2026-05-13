@@ -1,8 +1,8 @@
 {
   "version": 2,
-  "dgSpecHash": "ik/3pQ0zxX0=",
+  "dgSpecHash": "VEgH5GMWApI=",
   "success": true,
-  "projectFilePath": "C:\\Users\\ilker\\Desktop\\MetaMAP\\MetaMAP.csproj",
+  "projectFilePath": "D:\\GithubProjects\\MetaMAP\\MetaMAP.csproj",
   "expectedPackageFiles": [
     "C:\\Users\\ilker\\.nuget\\packages\\eto.forms\\2.7.4\\eto.forms.2.7.4.nupkg.sha512",
     "C:\\Users\\ilker\\.nuget\\packages\\eto.platform.windows\\2.7.4\\eto.platform.windows.2.7.4.nupkg.sha512",
