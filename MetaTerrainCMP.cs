@@ -432,15 +432,22 @@ out geom;";
             "https://z.overpass-api.de/api/interpreter"
         };
 
+        string lastError = "";
+
         foreach (var endpoint in endpoints)
         {
             try
             {
                 using var httpClient = new HttpClient();
-                httpClient.Timeout = TimeSpan.FromSeconds(15);
+                httpClient.Timeout = TimeSpan.FromSeconds(30);
+                httpClient.DefaultRequestHeaders.Add("User-Agent", "MetaMAP/1.0 (Grasshopper Plugin)");
 
-                var content = new StringContent(query, System.Text.Encoding.UTF8, "application/x-www-form-urlencoded");
-                var response = httpClient.PostAsync(endpoint, content).Result;
+                // Overpass API expects the query as a form-encoded "data" parameter
+                var formContent = new FormUrlEncodedContent(new[]
+                {
+                    new KeyValuePair<string, string>("data", query)
+                });
+                var response = httpClient.PostAsync(endpoint, formContent).Result;
 
                 if (response.IsSuccessStatusCode)
                 {
@@ -449,15 +456,21 @@ out geom;";
                     {
                         return result;
                     }
+                    lastError = $"{endpoint}: Success but no 'elements' in response (length={result?.Length ?? 0})";
+                }
+                else
+                {
+                    lastError = $"{endpoint}: HTTP {(int)response.StatusCode} {response.ReasonPhrase}";
                 }
             }
-            catch
+            catch (Exception ex)
             {
+                lastError = $"{endpoint}: {ex.GetBaseException().Message}";
                 continue;
             }
         }
 
-        throw new Exception("All OpenStreetMap API endpoints failed");
+        throw new Exception($"All OpenStreetMap API endpoints failed. Last error: {lastError}");
     }
 
     private List<ContourLine> ParseOSMContours(string jsonData)
