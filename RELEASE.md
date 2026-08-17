@@ -2,11 +2,14 @@
 
 ## How to Release a New Version
 
-1. **Update the version** in `MetaMAP.csproj`:
+1. **Update the version** in `MetaMAP.csproj` and `manifest.yml`:
    ```xml
    <Version>0.0.30</Version>
    <AssemblyVersion>0.0.30</AssemblyVersion>
    <FileVersion>0.0.30</FileVersion>
+   ```
+   ```yaml
+   version: 0.0.30
    ```
 
 2. **Commit your changes**:
@@ -47,6 +50,35 @@ string apiUrl = "https://api.github.com/repos/ilkerkaradag/MetaMAP/releases/late
 3. Downloads `MetaMAP_Manual_New.zip` from the latest release
 4. Compares versions and installs if newer
 5. Falls back to `http://archidynamics.com/MetaMAP_Manual_New.zip` if GitHub is unavailable
+
+## Publishing to Yak (Rhino Package Manager, incl. Mac)
+
+MetaMAP now builds as a single cross-platform `net7.0` assembly, loadable by
+Rhino 8 on both Windows and Mac. To publish/update the Yak package:
+
+1. **Build** (produces `bin/Release/net7.0/MetaMAP.gha` and dependencies):
+   ```bash
+   dotnet build MetaMAP.csproj -c Release -f net7.0
+   ```
+
+2. **Build the Yak package** from a folder containing the `.gha`, its
+   dependencies, and `manifest.yml` (find `yak` at
+   `/Applications/Rhino 8.app/Contents/Resources/bin/yak` on Mac, or
+   `C:\Program Files\Rhino 8\System\yak.exe` on Windows):
+   ```bash
+   cd bin/Release/net7.0
+   cp ../../../manifest.yml .
+   yak build
+   ```
+   This produces something like `metamap-0.0.57-rh8-any.yak` — the `any`
+   tag means one package serves both Windows and Mac.
+
+3. **Push** (requires being logged in via `yak login`):
+   ```bash
+   yak push metamap-0.0.57-rh8-any.yak
+   ```
+
+Keep `manifest.yml`'s `version` in sync with `MetaMAP.csproj` on every release.
 
 ## Benefits
 

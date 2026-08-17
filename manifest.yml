@@ -1,0 +1,17 @@
+---
+name: metamap
+version: 0.0.57
+authors:
+- Ilker Karadag
+description: >
+  MetaMAP is a Grasshopper plugin for Rhino that fetches and processes
+  geospatial data from OpenStreetMap and other sources, to build 3D
+  building and terrain models for architectural and urban planning.
+url: https://archidynamics.com/
+icon: Resources/MetaBuilding.png
+keywords:
+- metamap
+- mapping
+- analysis
+- gis
+- openstreetmap

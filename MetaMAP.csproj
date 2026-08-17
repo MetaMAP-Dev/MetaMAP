@@ -1,9 +1,9 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
     <PropertyGroup>
-        <TargetFrameworks>net8.0-windows</TargetFrameworks>
-        <EnableWindowsTargeting>true</EnableWindowsTargeting>
-        <UseWindowsForms>true</UseWindowsForms>
+        <!-- net7.0 (no -windows suffix, no UseWindowsForms) builds one cross-platform
+             assembly Rhino 8 loads on both Windows and Mac. -->
+        <TargetFrameworks>net7.0</TargetFrameworks>
         <Title>MetaMAP</Title>
         <Company>Ilker Karadag</Company>
         <Description>MetaMAP component for advanced mapping and analysis.</Description>
@@ -38,11 +38,18 @@
         <Delete Files="$(ZipPath)" Condition="Exists('$(ZipPath)')" />
     </Target>
 
-    <Target Name="ZipDistribution" AfterTargets="DeleteOldZip" DependsOnTargets="CopyVersionToOutput">
+    <Target Name="ZipDistribution" AfterTargets="DeleteOldZip" DependsOnTargets="CopyVersionToOutput" Condition="'$(OS)' == 'Windows_NT'">
         <PropertyGroup>
             <ZipPath>$(TargetDir)MetaMAP_Manual_New.zip</ZipPath>
         </PropertyGroup>
         <Exec Command="powershell -Command &quot;Compress-Archive -Path '$(TargetDir)$(TargetName).gha', '$(TargetDir)*.dll', '$(TargetDir)$(TargetName).deps.json', '$(TargetDir)version.txt', '$(TargetDir)Templates' -DestinationPath '$(ZipPath)' -Force&quot;" />
+    </Target>
+
+    <Target Name="ZipDistributionUnix" AfterTargets="DeleteOldZip" DependsOnTargets="CopyVersionToOutput" Condition="'$(OS)' != 'Windows_NT'">
+        <PropertyGroup>
+            <ZipPath>$(TargetDir)MetaMAP_Manual_New.zip</ZipPath>
+        </PropertyGroup>
+        <Exec Command="zip -j -r &quot;$(ZipPath)&quot; &quot;$(TargetDir)$(TargetName).gha&quot; &quot;$(TargetDir)&quot;*.dll &quot;$(TargetDir)$(TargetName).deps.json&quot; &quot;$(TargetDir)version.txt&quot; &amp;&amp; cd &quot;$(TargetDir)&quot; &amp;&amp; zip -r &quot;$(ZipPath)&quot; Templates" WorkingDirectory="$(TargetDir)" />
     </Target>
 
     <ItemGroup>
@@ -67,12 +74,21 @@
     </PropertyGroup>
 
     <ItemGroup>
-        <PackageReference Include="Grasshopper" Version="8.21.25188.17001" IncludeAssets="compile;build" />
+        <PackageReference Include="Grasshopper" Version="8.27.26019.16021" IncludeAssets="compile;build" />
         <PackageReference Include="System.Drawing.Common" Version="8.0.0" />
         <PackageReference Include="System.Resources.Extensions" Version="8.0.0" />
         <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
         <PackageReference Include="Eto.Forms" Version="2.7.4" />
-        <PackageReference Include="Eto.Platform.Windows" Version="2.7.4" />
+    </ItemGroup>
+
+    <!-- GH_Component's menu API (AppendAdditionalComponentMenuItems) is typed against
+         System.Windows.Forms regardless of platform. The Grasshopper package no longer
+         pulls this in for us, so reference the compile-time-only reference assemblies;
+         at runtime Rhino/Grasshopper itself supplies the real implementation on both
+         Windows and Mac. See https://discourse.mcneel.com/t/windows-forms-on-gh-and-rhino-8/171307 -->
+    <ItemGroup>
+        <PackageReference Include="Microsoft.WindowsDesktop.App.Ref" Version="7.0.0" GeneratePathProperty="true" ExcludeAssets="all" />
+        <Reference Include="$(PkgMicrosoft_WindowsDesktop_App_Ref)\ref\net7.0\System.Windows.Forms.dll" Private="false" />
     </ItemGroup>
 
 

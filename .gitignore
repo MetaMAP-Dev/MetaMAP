@@ -1,3 +1,46 @@
 # Ignore Visual Studio caches and index files
 .vs/
 *.vsidx
+
+## Build results
+[Bb]in/
+[Oo]bj/
+[Dd]ebug/
+[Rr]elease/
+x64/
+x86/
+[Ll]og/
+[Ll]ogs/
+
+## User-specific files
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+
+## Rider
+.idea/
+
+## VS Code
+.vscode/
+
+## NuGet
+*.nupkg
+*.snupkg
+**/[Pp]ackages/*
+!**/[Pp]ackages/build/
+*.nuget.props
+*.nuget.targets
+
+## OS files
+.DS_Store
+Thumbs.db
+
+## Generated at build time (see MetaMAP.csproj WriteVersionToFile target)
+/version.txt
+
+## Stray local logs
+build_log.txt
+
+## Serena MCP local index
+.serena/
