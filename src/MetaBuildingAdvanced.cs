@@ -1,22 +1,22 @@
 using Grasshopper.Kernel;
 using Grasshopper.Kernel.Types;
-using MetaMAP.Properties;
-using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using Rhino.Geometry;
 using System;
 using System.Collections.Generic;
 using System.Drawing;
-using System.IO;
+using System.Globalization;
 using System.Linq;
-using System.Net.Http;
-using System.Threading.Tasks;
 
 namespace MetaMap
 {
+    /// <summary>
+    /// Fetches LoD1 building volumes from the TUM / So2Sat global 3D building WFS, tile by tile.
+    /// </summary>
     public class MetaBuildingAdvanced : GH_Component
     {
-        private List<string> _debugMessages = new List<string>();
+        private const string WfsUrl = "https://tubvsig-so2sat-vm1.srv.mwn.de/geoserver/ows";
+        private readonly List<string> _debugMessages = new List<string>();
 
         public MetaBuildingAdvanced()
             : base("MetaBuildingAdvanced", "MetaBuildingAdv",
@@ -25,23 +25,9 @@ namespace MetaMap
         {
         }
 
-        protected override Bitmap Icon
-        {
-            get
-            {
-                if (!PlatformUtils.IsWindows())
-                    return null;
+        protected override Bitmap Icon => MetaResources.GetIcon("MetaBuildingAdvanced.png");
 
-                var iconBytes = Resources.MetaBuildingAdvanced;
-                if (iconBytes != null)
-                    using (var ms = new MemoryStream(iconBytes))
-                        return new Bitmap(ms);
-
-                return null;
-            }
-        }
-
-        public override Guid ComponentGuid => new Guid("B2C3D4E5-F6A7-8901-BCDE-F01234567891"); // New GUID
+        public override Guid ComponentGuid => new Guid("B2C3D4E5-F6A7-8901-BCDE-F01234567891");
 
         protected override void RegisterInputParams(GH_InputParamManager pManager)
         {
@@ -73,7 +59,6 @@ namespace MetaMap
             DA.GetData(3, ref terrainGoo);
             DA.GetData(4, ref tileCount);
 
-            // Check for NaN (signal from MetaFetch that no value is selected)
             if (double.IsNaN(lat) || double.IsNaN(lon))
             {
                 DA.SetDataList(0, new List<Brep>());
@@ -84,29 +69,27 @@ namespace MetaMap
             _debugMessages.Clear();
             Log($"Processing request for Lat: {lat}, Lon: {lon}, Radius: {radius}m");
 
-            GeometryBase terrainGeo = null;
-            if (terrainGoo != null)
-            {
-                if (terrainGoo is GH_Mesh ghMesh)
-                    terrainGeo = ghMesh.Value;
-                else if (terrainGoo is GH_Brep ghBrep)
-                    terrainGeo = ghBrep.Value;
-                else if (terrainGoo is GH_Surface ghSurf)
-                    terrainGeo = ghSurf.Value;
-                
-                if (terrainGeo != null)
-                    Log($"Using terrain geometry: {terrainGeo.ObjectType}");
-            }
-
             try
             {
-                var buildings = ProcessBuildings(lat, lon, radius, terrainGeo, tileCount);
+                if (!GeoProjection.IsValidCoordinate(lat, lon))
+                    throw new Exception("Invalid coordinates. Use latitude (-90 to 90) and longitude (-180 to 180)");
+                if (double.IsNaN(radius) || radius <= 0 || radius > MetaBuildingCMP.MaxRadius)
+                    throw new Exception($"Radius must be between 1 and {MetaBuildingCMP.MaxRadius:F0} meters");
+
+                var terrainMesh = OsmBuildingGeometry.ToTerrainMesh(terrainGoo);
+                if (terrainGoo != null && terrainMesh == null)
+                    Log("Terrain input could not be converted to a mesh; buildings are placed at Z=0.");
+                else if (terrainMesh != null)
+                    Log($"Using terrain mesh with {terrainMesh.Vertices.Count} vertices");
+
+                var buildings = ProcessBuildings(lat, lon, radius, terrainMesh, tileCount);
                 DA.SetDataList(0, buildings);
                 DA.SetData(1, string.Join("\n", _debugMessages));
             }
             catch (Exception ex)
             {
                 Log($"Error: {ex.Message}");
+                AddRuntimeMessage(GH_RuntimeMessageLevel.Error, ex.Message);
                 DA.SetDataList(0, new List<Brep>());
                 DA.SetData(1, string.Join("\n", _debugMessages));
             }
@@ -114,44 +97,34 @@ namespace MetaMap
 
         private void Log(string msg)
         {
-            string timestamp = DateTime.Now.ToString("HH:mm:ss");
-            _debugMessages.Add($"[{timestamp}] {msg}");
+            _debugMessages.Add($"[{DateTime.Now:HH:mm:ss}] {msg}");
         }
 
-        private List<Brep> ProcessBuildings(double lat, double lon, double radius, GeometryBase terrainGeo, int tileCount)
+        private List<Brep> ProcessBuildings(double lat, double lon, double radius, Mesh terrainMesh, int tileCount)
         {
             var buildings = new List<Brep>();
+            var projection = new GeoProjection(lat, lon);
+            projection.BoundingBox(radius, out double minLat, out double minLon, out double maxLat, out double maxLon);
+            Log($"Calculated Full BBox: {Fmt(minLon)},{Fmt(minLat)},{Fmt(maxLon)},{Fmt(maxLat)}");
 
-            string fullBboxStr = CalculateBbox(lat, lon, radius);
-            Log($"Calculated Full BBox: {fullBboxStr}");
-
-            // Parse bbox
-            var partsStr = fullBboxStr.Split(',');
-            double minLon = double.Parse(partsStr[0]);
-            double minLat = double.Parse(partsStr[1]);
-            double maxLon = double.Parse(partsStr[2]);
-            double maxLat = double.Parse(partsStr[3]);
-
-            // Tiling selection
-            int steps = 1;
+            int steps;
             if (tileCount > 0)
             {
-                steps = tileCount;
+                steps = Math.Min(tileCount, 12);
                 Log($"Using user-defined tiling: {steps}x{steps} grid ({steps * steps} tiles).");
             }
             else
             {
-                // Adaptive tiling
                 if (radius <= 251) steps = 1;
                 else if (radius <= 500) steps = 2;
-                else steps = 4;
+                else if (radius <= 1500) steps = 4;
+                else steps = 6;
                 Log($"Using adaptive tiling: {steps}x{steps} grid ({steps * steps} tiles) for {radius}m radius.");
             }
 
             var tiles = new List<string>();
             double latStep = (maxLat - minLat) / steps;
             double lonStep = (maxLon - minLon) / steps;
-
             for (int i = 0; i < steps; i++)
             {
                 for (int j = 0; j < steps; j++)
@@ -160,42 +133,42 @@ namespace MetaMap
                     double tMaxLon = minLon + (j + 1) * lonStep;
                     double tMinLat = minLat + i * latStep;
                     double tMaxLat = minLat + (i + 1) * latStep;
-                    tiles.Add($"{tMinLon},{tMinLat},{tMaxLon},{tMaxLat},EPSG:4326");
+                    tiles.Add($"{Fmt(tMinLon)},{Fmt(tMinLat)},{Fmt(tMaxLon)},{Fmt(tMaxLat)},EPSG:4326");
                 }
             }
 
             var allFeatures = new List<JObject>();
-
+            int failedTiles = 0;
             for (int i = 0; i < tiles.Count; i++)
             {
                 Log($"Downloading Tile {i + 1}/{tiles.Count}: {tiles[i]}");
                 string jsonStr = DownloadData(tiles[i]);
-                
-                if (!string.IsNullOrEmpty(jsonStr))
+                if (string.IsNullOrEmpty(jsonStr))
                 {
-                    try
+                    failedTiles++;
+                    Log($"Tile {i + 1} failed to download.");
+                    continue;
+                }
+
+                try
+                {
+                    var data = JObject.Parse(jsonStr);
+                    if (data["features"] is JArray features)
                     {
-                        var data = JObject.Parse(jsonStr);
-                        var features = data["features"] as JArray;
-                        if (features != null)
-                        {
-                            Log($"Tile {i + 1} found {features.Count} features.");
-                            foreach (var f in features)
-                            {
-                                allFeatures.Add(f as JObject);
-                            }
-                        }
-                    }
-                    catch (Exception e)
-                    {
-                        Log($"Error parsing Tile {i + 1}: {e.Message}");
+                        Log($"Tile {i + 1} found {features.Count} features.");
+                        foreach (var f in features)
+                            if (f is JObject o) allFeatures.Add(o);
                     }
                 }
-                else
+                catch (Exception e)
                 {
-                    Log($"Tile {i + 1} failed to download.");
+                    failedTiles++;
+                    Log($"Error parsing Tile {i + 1}: {e.Message}");
                 }
             }
+
+            if (failedTiles > 0)
+                AddRuntimeMessage(GH_RuntimeMessageLevel.Warning, $"{failedTiles} of {tiles.Count} tiles could not be downloaded; the result is incomplete.");
 
             if (allFeatures.Count == 0)
             {
@@ -205,107 +178,94 @@ namespace MetaMap
 
             Log($"Total features found: {allFeatures.Count}");
 
-            // Deduplicate
             var uniqueFeatures = new Dictionary<string, JObject>();
+            int anonymous = 0;
             foreach (var f in allFeatures)
             {
                 string id = f["id"]?.ToString();
-                if (!string.IsNullOrEmpty(id) && !uniqueFeatures.ContainsKey(id))
-                {
+                if (string.IsNullOrEmpty(id)) id = "anon-" + (anonymous++);
+                if (!uniqueFeatures.ContainsKey(id))
                     uniqueFeatures[id] = f;
-                }
             }
-
             Log($"Unique features after deduplication: {uniqueFeatures.Count}");
 
+            var sampler = new OsmBuildingGeometry.TerrainSampler(terrainMesh);
+            int failed = 0;
             foreach (var feature in uniqueFeatures.Values)
             {
                 var props = feature["properties"] as JObject;
                 var geom = feature["geometry"] as JObject;
-                double height = props?["height"]?.Value<double>() ?? 3.0;
+                double height = 3.0;
+                try
+                {
+                    var h = props?["height"];
+                    if (h != null && h.Type != JTokenType.Null)
+                    {
+                        double parsed = h.Type == JTokenType.String
+                            ? OsmBuildingGeometry.ParseLength(h.ToString()) ?? 3.0
+                            : h.Value<double>();
+                        if (parsed > 0 && !double.IsNaN(parsed)) height = parsed;
+                    }
+                }
+                catch
+                {
+                    // keep default
+                }
 
-                var newBreps = CreateBuildingBrep(geom, height, lon, lat, terrainGeo);
-                buildings.AddRange(newBreps);
+                int before = buildings.Count;
+                buildings.AddRange(CreateBuildingBreps(geom, height, projection, sampler));
+                if (buildings.Count == before) failed++;
             }
 
+            if (failed > 0) Log($"{failed} feature(s) produced no valid solid.");
             Log($"Successfully created {buildings.Count} Breps.");
             return buildings;
         }
 
-        private string CalculateBbox(double lat, double lon, double radiusM)
-        {
-            double R = 6378137;
-            double dLat = radiusM / R;
-            double dLon = radiusM / (R * Math.Cos(Math.PI * lat / 180));
-
-            double latOffset = dLat * 180 / Math.PI;
-            double lonOffset = dLon * 180 / Math.PI;
-
-            double minLat = lat - latOffset;
-            double maxLat = lat + latOffset;
-            double minLon = lon - lonOffset;
-            double maxLon = lon + lonOffset;
-
-            return $"{minLon},{minLat},{maxLon},{maxLat},EPSG:4326";
-        }
+        private static string Fmt(double v) => v.ToString("F7", CultureInfo.InvariantCulture);
 
         private string DownloadData(string bbox)
         {
-            string wfsUrl = "https://tubvsig-so2sat-vm1.srv.mwn.de/geoserver/ows";
-            string paramsStr = $"service=WFS&version=1.1.0&request=GetFeature&typeName=global3D:lod1_global&outputFormat=application/json&srsName=EPSG:4326&bbox={bbox}";
-            string fullUrl = $"{wfsUrl}?{paramsStr}";
+            string url = $"{WfsUrl}?service=WFS&version=1.1.0&request=GetFeature&typeName=global3D:lod1_global&outputFormat=application/json&srsName=EPSG:4326&bbox={bbox}";
 
-            int maxRetries = 3;
-            for (int attempt = 0; attempt < maxRetries; attempt++)
+            string cached = MetaCache.TryGet(url, TimeSpan.FromDays(7));
+            if (cached != null)
             {
-                try
-                {
-                    using (var client = new HttpClient())
-                    {
-                        client.Timeout = TimeSpan.FromSeconds(120);
-                        var response = client.GetAsync(fullUrl).Result;
-                        response.EnsureSuccessStatusCode();
-                        return response.Content.ReadAsStringAsync().Result;
-                    }
-                }
-                catch (Exception ex)
-                {
-                    Log($"Error downloading data (Attempt {attempt + 1}/{maxRetries}): {ex.Message}");
-                    System.Threading.Thread.Sleep(2000);
-                }
+                Log("  (served from cache)");
+                return cached;
             }
 
-            Log($"Failed to download data after {maxRetries} attempts.");
-            return null;
+            var response = MetaHttp.Get(url, TimeSpan.FromSeconds(120), maxAttempts: 3);
+            if (!response.Success)
+            {
+                Log($"  download failed: {response.Error}");
+                return null;
+            }
+            if (!MetaHttp.LooksLikeJson(response.Body))
+            {
+                Log("  server returned a non-JSON answer (service busy or unavailable)");
+                return null;
+            }
+
+            MetaCache.Put(url, response.Body);
+            return response.Body;
         }
 
-        private List<Brep> CreateBuildingBrep(JObject geometry, double height, double centerLon, double centerLat, GeometryBase terrainGeo)
+        private List<Brep> CreateBuildingBreps(JObject geometry, double height, GeoProjection projection, OsmBuildingGeometry.TerrainSampler sampler)
         {
             var breps = new List<Brep>();
             if (geometry == null) return breps;
 
             string type = geometry["type"]?.ToString();
-            JArray coordinates = geometry["coordinates"] as JArray;
+            if (!(geometry["coordinates"] is JArray coordinates)) return breps;
 
-            if (coordinates == null) return breps;
-
-            List<JArray> polygons = new List<JArray>();
-
+            var polygons = new List<JArray>();
             if (type == "MultiPolygon")
-            {
-                foreach (var poly in coordinates)
-                {
-                    polygons.Add(poly as JArray);
-                }
-            }
+                polygons.AddRange(coordinates.OfType<JArray>());
             else if (type == "Polygon")
-            {
                 polygons.Add(coordinates);
-            }
             else
-            {
                 return breps;
-            }
 
             foreach (var polyCoords in polygons)
             {
@@ -313,74 +273,19 @@ namespace MetaMap
                 {
                     if (polyCoords == null || polyCoords.Count == 0) continue;
 
-                    var exteriorCoords = polyCoords[0] as JArray;
-                    var exteriorCurve = CreatePolyline(exteriorCoords, centerLon, centerLat);
+                    var outer = OsmBuildingGeometry.CleanRing(ToPoints(polyCoords[0] as JArray, projection));
+                    if (outer == null) continue;
 
-                    var interiorCurves = new List<Curve>();
+                    var footprint = new BuildingFootprint { Outer = outer, Height = height, MinHeight = 0 };
                     for (int i = 1; i < polyCoords.Count; i++)
                     {
-                        var interiorCoords = polyCoords[i] as JArray;
-                        interiorCurves.Add(CreatePolyline(interiorCoords, centerLon, centerLat));
+                        var hole = OsmBuildingGeometry.CleanRing(ToPoints(polyCoords[i] as JArray, projection));
+                        if (hole != null) footprint.Holes.Add(hole);
                     }
 
-                    var curves = new List<Curve> { exteriorCurve };
-                    curves.AddRange(interiorCurves);
-
-                    // Calculate average terrain elevation
-                    double averageZ = 0;
-                    if (terrainGeo != null)
-                    {
-                        var points = new List<Point3d>();
-                        if (exteriorCurve is PolylineCurve pc)
-                        {
-                            for (int i = 0; i < pc.PointCount; i++)
-                                points.Add(pc.Point(i));
-                        }
-
-                        var elevations = new List<double>();
-                        foreach (var pt in points)
-                        {
-                            double z = 0;
-                            if (terrainGeo is Mesh mesh && mesh.IsValid)
-                            {
-                                var closestPt = mesh.ClosestPoint(pt);
-                                z = closestPt.Z;
-                            }
-                            else if (terrainGeo is Brep brep && brep.IsValid)
-                            {
-                                brep.ClosestPoint(pt, out Point3d closestPt, out _, out _, out _, 0, out _);
-                                z = closestPt.Z;
-                            }
-                            elevations.Add(z);
-                        }
-
-                        if (elevations.Count > 0)
-                            averageZ = elevations.Average();
-                    }
-
-                    // Move curves to average Z
-                    if (Math.Abs(averageZ) > 0.001)
-                    {
-                        var transform = Transform.Translation(0, 0, averageZ);
-                        foreach (var c in curves)
-                        {
-                            c.Transform(transform);
-                        }
-                    }
-
-                    var planarBreps = Brep.CreatePlanarBreps(curves, 1e-3);
-
-                    if (planarBreps != null && planarBreps.Length > 0)
-                    {
-                        var baseSrf = planarBreps[0];
-                        var pathCurve = new LineCurve(new Point3d(0, 0, averageZ), new Point3d(0, 0, averageZ + height));
-                        var extrudedBrep = baseSrf.Faces[0].CreateExtrusion(pathCurve, true);
-
-                        if (extrudedBrep != null)
-                        {
-                            breps.Add(extrudedBrep);
-                        }
-                    }
+                    double baseZ = sampler.IsAvailable ? sampler.AverageUnder(outer) : 0.0;
+                    var solid = OsmBuildingGeometry.CreateSolid(footprint, baseZ);
+                    if (solid != null) breps.Add(solid);
                 }
                 catch (Exception ex)
                 {
@@ -391,39 +296,20 @@ namespace MetaMap
             return breps;
         }
 
-        private Curve CreatePolyline(JArray coords, double centerLon, double centerLat)
+        private static List<Point3d> ToPoints(JArray coords, GeoProjection projection)
         {
             var points = new List<Point3d>();
+            if (coords == null) return points;
             foreach (var coord in coords)
             {
-                var c = coord as JArray;
-                if (c != null && c.Count >= 2)
+                if (coord is JArray c && c.Count >= 2)
                 {
                     double lon = c[0].Value<double>();
                     double lat = c[1].Value<double>();
-                    var pt = ProjectCoords(lon, lat, centerLon, centerLat);
-                    points.Add(pt);
+                    points.Add(projection.ToLocal(lat, lon));
                 }
             }
-
-            if (points.Count > 0 && points[0].DistanceTo(points[points.Count - 1]) > 1e-6)
-            {
-                points.Add(points[0]);
-            }
-
-            return new PolylineCurve(points);
-        }
-
-        private Point3d ProjectCoords(double lon, double lat, double centerLon, double centerLat)
-        {
-            double latRad = centerLat * Math.PI / 180.0;
-            double mPerDegLat = 111132.92 - 559.82 * Math.Cos(2 * latRad) + 1.175 * Math.Cos(4 * latRad);
-            double mPerDegLon = 111412.84 * Math.Cos(latRad) - 93.5 * Math.Cos(3 * latRad) + 0.118 * Math.Cos(5 * latRad);
-
-            double x = (lon - centerLon) * mPerDegLon;
-            double y = (lat - centerLat) * mPerDegLat;
-
-            return new Point3d(x, y, 0);
+            return points;
         }
     }
 }

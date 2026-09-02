@@ -1,0 +1,67 @@
+name: Build
+
+on:
+  push:
+    branches: ["**"]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+
+      - name: Build (cross-platform net7.0 assembly)
+        run: dotnet build MetaMAP.csproj -c Release -f net7.0 -warnaserror:CS0618
+
+      - name: Check that only the intended files are shipped
+        run: |
+          ls -la bin/Release/net7.0/dist
+          test -f bin/Release/net7.0/dist/MetaMAP.gha
+          test -f bin/Release/net7.0/dist/Newtonsoft.Json.dll
+          test -f bin/Release/net7.0/dist/manifest.yml
+          test -f bin/Release/net7.0/dist/version.txt
+          test -d bin/Release/net7.0/dist/Templates
+          # Rhino provides these; shipping them breaks loading on macOS.
+          for forbidden in Eto.dll System.Drawing.Common.dll RhinoCommon.dll Grasshopper.dll System.Windows.Forms.dll; do
+            if [ -f "bin/Release/net7.0/dist/$forbidden" ]; then echo "$forbidden must not be shipped"; exit 1; fi
+          done
+          # manifest.yml and the assembly must agree on the version.
+          manifest=$(grep -E '^version:' manifest.yml | awk '{print $2}')
+          built=$(cat bin/Release/net7.0/dist/version.txt | tr -d '[:space:]')
+          echo "manifest=$manifest built=$built"
+          test "$manifest" = "$built"
+
+      - name: Validate Grasshopper templates
+        run: python3 scripts/check_templates.py Templates
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: MetaMAP
+          path: |
+            bin/Release/net7.0/dist
+            bin/Release/net7.0/MetaMAP_Manual_New.zip
+
+  release:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: MetaMAP
+          path: artifact
+
+      - name: Create GitHub release with the update archive
+        uses: softprops/action-gh-release@v2
+        with:
+          files: artifact/MetaMAP_Manual_New.zip
+          generate_release_notes: true

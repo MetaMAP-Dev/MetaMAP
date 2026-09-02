@@ -7,7 +7,6 @@ using System.Net.Http;
 using System.Reflection;
 using System.Threading.Tasks;
 using System.Linq;
-using MetaMAP.Properties;
 
 namespace MetaMap
 {
@@ -25,23 +24,18 @@ namespace MetaMap
 
         public override Guid ComponentGuid => new Guid("12345678-1234-1234-1234-123456789012");
 
-        protected override Bitmap Icon
+        protected override Bitmap Icon => MetaResources.GetIcon("MetaUpdate.png");
+
+        /// <summary>
+        /// Download locations, tried in order. The first is the GitHub release asset produced by
+        /// the CI workflow; the others are legacy fallbacks.
+        /// </summary>
+        public static readonly string[] UpdateUrls =
         {
-            get
-            {
-                if (!PlatformUtils.IsWindows())
-                    return null;
-
-                var iconBytes = Resources.ResourceManager.GetObject("MetaMAP_update") as byte[];
-                if (iconBytes != null)
-                    using (var ms = new MemoryStream(iconBytes))
-                    {
-                        return new Bitmap(ms);
-                    }
-
-                return null;
-            }
-        }
+            "https://github.com/metamap-dev/metamap/releases/latest/download/MetaMAP_Manual_New.zip",
+            "https://github.com/karadagi/MetaMAP/raw/main/bin/Debug/net8.0-windows/MetaMAP_Manual_New.zip",
+            "http://archidynamics.com/MetaMAP_Manual_New.zip",
+        };
 
         protected override void RegisterInputParams(GH_InputParamManager pManager)
         {
@@ -75,8 +69,7 @@ namespace MetaMap
                 _statusMessage = "Checking update...";
                 
                 // Run update asynchronously to avoid freezing UI
-                string updateUrl = "https://github.com/karadagi/MetaMAP/raw/main/bin/Debug/net8.0-windows/MetaMAP_Manual_New.zip";
-                Task.Run(() => PerformUpdate(updateUrl));
+                Task.Run(() => PerformUpdate(UpdateUrls));
             }
 
             DA.SetData(0, _statusMessage);
@@ -104,7 +97,7 @@ namespace MetaMap
             return Assembly.GetExecutingAssembly().GetName().Version.ToString();
         }
 
-        private async Task PerformUpdate(string url)
+        private async Task PerformUpdate(string[] urls)
         {
             try
             {
@@ -114,27 +107,42 @@ namespace MetaMap
                 string tempFile = Path.GetTempFileName();
                 string installDir = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location);
 
-                using (var client = new HttpClient())
+                var client = MetaHttp.Client;
+                string lastError = "no download location configured";
+                bool downloaded = false;
+                foreach (var url in urls)
                 {
-                    // Add User-Agent to avoid being blocked by some servers
-                    client.DefaultRequestHeaders.Add("User-Agent", "MetaMAP-Updater");
-                    
-                    // Append timestamp to URL to prevent caching
-                    string downloadUrl = url;
-                    if (url.Contains("?"))
-                        downloadUrl += $"&t={DateTime.Now.Ticks}";
-                    else
-                        downloadUrl += $"?t={DateTime.Now.Ticks}";
-
-                    // Download file
-                    var response = await client.GetAsync(downloadUrl);
-                    response.EnsureSuccessStatusCode();
-                    
-                    using (var fs = new FileStream(tempFile, FileMode.Create))
+                    try
                     {
-                        await response.Content.CopyToAsync(fs);
+                        // Append timestamp to URL to prevent caching
+                        string downloadUrl = url + (url.Contains("?") ? "&" : "?") + $"t={DateTime.Now.Ticks}";
+                        using var cts = new System.Threading.CancellationTokenSource(TimeSpan.FromMinutes(3));
+                        using var response = await client.GetAsync(downloadUrl, cts.Token);
+                        if (!response.IsSuccessStatusCode)
+                        {
+                            lastError = $"{url}: HTTP {(int)response.StatusCode}";
+                            continue;
+                        }
+                        using (var fs = new FileStream(tempFile, FileMode.Create))
+                        {
+                            await response.Content.CopyToAsync(fs);
+                        }
+                        // Make sure we really got a zip archive and not an HTML error page.
+                        using (var check = ZipFile.OpenRead(tempFile))
+                        {
+                            if (check.Entries.Count == 0) throw new Exception("empty archive");
+                        }
+                        downloaded = true;
+                        break;
+                    }
+                    catch (Exception ex)
+                    {
+                        lastError = $"{url}: {ex.GetBaseException().Message}";
                     }
                 }
+
+                if (!downloaded)
+                    throw new Exception($"No update server reachable ({lastError})");
 
                 _statusMessage = "Checking version...";
                 UpdateStatus();
