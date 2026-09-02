@@ -88,4 +88,19 @@
         <Copy SourceFiles="@(DistTemplates)" DestinationFiles="@(DistTemplates->'$(DistDir)Templates\%(RecursiveDir)%(Filename)%(Extension)')" />
     </Target>
 
+    <!-- Local development: write MetaMAP.ghlink into the Grasshopper Libraries folder so Rhino
+         loads the freshly built plug-in straight from the dist folder. One file, overwritten on
+         every build, so it always points at whichever configuration was built last.
+         Skipped when no Grasshopper Libraries folder exists (CI). -->
+    <Target Name="WriteGrasshopperLink" AfterTargets="Distribution">
+        <PropertyGroup>
+            <GhLibrariesDir Condition="$([MSBuild]::IsOSPlatform('OSX'))">$(HOME)/Library/Application Support/McNeel/Rhinoceros/8.0/Plug-ins/Grasshopper (b45a29b1-4343-4035-989e-044e8580d9cf)/Libraries</GhLibrariesDir>
+            <GhLibrariesDir Condition="$([MSBuild]::IsOSPlatform('Windows'))">$(APPDATA)\Grasshopper\Libraries</GhLibrariesDir>
+            <GhLinkFile>$(GhLibrariesDir)$([System.IO.Path]::DirectorySeparatorChar)$(TargetName).ghlink</GhLinkFile>
+            <GhLinkTarget>$(DistDir.TrimEnd('/').TrimEnd('\'))</GhLinkTarget>
+        </PropertyGroup>
+        <WriteLinesToFile File="$(GhLinkFile)" Lines="$(GhLinkTarget)" Overwrite="true" Condition="'$(GhLibrariesDir)' != '' And Exists('$(GhLibrariesDir)')" />
+        <Message Importance="high" Text="Grasshopper link: $(GhLinkFile) -> $(GhLinkTarget)" Condition="'$(GhLibrariesDir)' != '' And Exists('$(GhLibrariesDir)')" />
+    </Target>
+
 </Project>

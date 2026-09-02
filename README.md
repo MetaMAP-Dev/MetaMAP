@@ -135,6 +135,11 @@ dotnet build MetaMAP.csproj -c Release -f net7.0
 ```
 
 The build writes the package contents to `bin/Release/net7.0/dist`.
+When a Grasshopper `Libraries` folder exists on the machine (macOS:
+`~/Library/Application Support/McNeel/Rhinoceros/8.0/Plug-ins/Grasshopper (b45a29b1-...)/Libraries`,
+Windows: `%APPDATA%\Grasshopper\Libraries`), the build also writes a `MetaMAP.ghlink` there
+pointing at that `dist` folder, so restarting Rhino loads the fresh build. The file is overwritten
+on every build and points at whichever configuration (Debug or Release) was built last.
 `scripts/check_templates.py` validates the templates, and
 `dotnet run --project tests/MetaMAP.UpdateChecks -c Release` checks update notifications.
 GitHub Actions runs these checks on every push, builds the Yak package, and on a
