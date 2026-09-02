@@ -102,12 +102,14 @@ shipped templates are:
 The `_for_MACOS` variants are generated from the regular ones with `scripts/make_mac_template.py`
 and are handy on any machine where the map window cannot be shown.
 
-`MetaUPDATE` downloads the newest release archive from GitHub and installs it next to the plugin.
+`MetaUPDATE` checks Yak for a newer published version and reports the result through its Status
+output. Set `Update` to true to check again. When an update is available, run `_PackageManager`
+in Rhino, search for **MetaMAP**, install the latest available version, and restart Rhino.
+The component only checks for updates; Rhino Package Manager performs the installation.
 
 ## How to Use
 
-1.  Install with the Rhino Package Manager (`_PackageManager`, search for *MetaMAP*) or drop the
-    contents of `MetaMAP_Manual_New.zip` into your Grasshopper `Libraries` folder.
+1.  Install with the Rhino Package Manager (`_PackageManager`, search for *MetaMAP*) and restart Rhino.
 2.  Open Grasshopper in Rhino.
 3.  You will find the MetaMAP components under the "MetaMAP" tab.
 4.  Use the `MetaFetch` component to pick a location.
@@ -130,11 +132,15 @@ other assemblies next to the plugin, that breaks loading on macOS ("Ribbon could
 dotnet build MetaMAP.csproj -c Release -f net7.0
 ```
 
-The build writes an installable folder to `bin/Release/net7.0/dist` and zips it as
-`bin/Release/net7.0/MetaMAP_Manual_New.zip`. `scripts/check_templates.py` validates the
-templates. GitHub Actions runs all of this on every push, builds the Yak package, and on a
+The build writes the package contents to `bin/Release/net7.0/dist`.
+`scripts/check_templates.py` validates the templates, and
+`dotnet run --project tests/MetaMAP.UpdateChecks -c Release` checks update notifications.
+GitHub Actions runs these checks on every push, builds the Yak package, and on a
 `vX.Y.Z` tag creates the GitHub release and publishes the package to the Rhino Package Manager
 (see `RELEASE.md`).
+
+If moving from a manual installation, remove the old MetaMAP files from Grasshopper's
+`Libraries` folder before installing through Package Manager to avoid loading duplicate copies.
 
 ## Troubleshooting
 

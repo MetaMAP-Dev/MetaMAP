@@ -1,23 +1,21 @@
 using Grasshopper.Kernel;
 using System;
 using System.Drawing;
-using System.IO;
-using System.IO.Compression;
-using System.Net.Http;
 using System.Reflection;
+using System.Threading;
 using System.Threading.Tasks;
-using System.Linq;
 
 namespace MetaMap
 {
     public class MetaUpdateCMP : GH_Component
     {
-        private string _statusMessage = "Idle";
-        private bool _isUpdating = false;
+        private string _statusMessage = "Set Update to true to check Rhino Package Manager.";
+        private bool _isChecking;
+        private bool _wasRequested;
 
         public MetaUpdateCMP()
           : base("MetaUPDATE", "MetaUPDATE",
-              "Update MetaMAP to the latest version from a URL",
+              "Check Yak for MetaMAP updates and install through Rhino Package Manager",
               "MetaMAP", "Templates")
         {
         }
@@ -26,260 +24,64 @@ namespace MetaMap
 
         protected override Bitmap Icon => MetaResources.GetIcon("MetaUpdate.png");
 
-        /// <summary>
-        /// Download locations, tried in order. The first is the GitHub release asset produced by
-        /// the CI workflow; the others are legacy fallbacks.
-        /// </summary>
-        public static readonly string[] UpdateUrls =
-        {
-            "https://github.com/metamap-dev/metamap/releases/latest/download/MetaMAP_Manual_New.zip",
-            "https://github.com/karadagi/MetaMAP/raw/main/bin/Debug/net8.0-windows/MetaMAP_Manual_New.zip",
-            "http://archidynamics.com/MetaMAP_Manual_New.zip",
-        };
-
         protected override void RegisterInputParams(GH_InputParamManager pManager)
         {
-            pManager.AddBooleanParameter("Update", "Upd", "Set to true to start update", GH_ParamAccess.item, false);
+            // Keep the existing input and output order for saved definitions.
+            pManager.AddBooleanParameter("Update", "Upd", "Set to true to check Yak for a new version. Install updates through Rhino Package Manager.", GH_ParamAccess.item, false);
         }
 
         protected override void RegisterOutputParams(GH_OutputParamManager pManager)
         {
-            pManager.AddTextParameter("Status", "S", "Update status", GH_ParamAccess.item);
-            pManager.AddTextParameter("Your Version", "V", "Currently installed version", GH_ParamAccess.item);
+            pManager.AddTextParameter("Status", "S", "Yak update check and Package Manager instructions", GH_ParamAccess.item);
+            pManager.AddTextParameter("Your Version", "V", "Currently loaded version", GH_ParamAccess.item);
         }
 
         protected override void SolveInstance(IGH_DataAccess DA)
         {
-            bool update = false;
+            bool requested = false;
+            if (!DA.GetData(0, ref requested)) return;
 
-            if (!DA.GetData(0, ref update)) return;
+            string currentVersion = Assembly.GetExecutingAssembly().GetName().Version.ToString(3);
+            bool startCheck = requested && !_wasRequested && !_isChecking;
+            _wasRequested = requested;
 
-            // Reset to Idle only when button is released and we are not currently updating
-            if (!update && !_isUpdating)
+            if (startCheck)
             {
-                _statusMessage = "Idle";
+                _isChecking = true;
+                _statusMessage = "Checking Rhino Package Manager (Yak)...";
+                _ = Task.Run(() => CheckForUpdate(currentVersion));
             }
 
-            // Only start if update is requested, we aren't already running, AND we are in Idle state
-            // This prevents the component from restarting immediately after finishing (Success or Fail)
-            // while the button is still held down.
-            if (update && !_isUpdating && _statusMessage == "Idle")
-            {
-                _isUpdating = true;
-                _statusMessage = "Checking update...";
-                
-                // Run update asynchronously to avoid freezing UI
-                Task.Run(() => PerformUpdate(UpdateUrls));
-            }
-
+            // Retain the result when a momentary button returns to false.
             DA.SetData(0, _statusMessage);
-            DA.SetData(1, GetCurrentVersion());
+            DA.SetData(1, currentVersion);
         }
 
-        private string GetCurrentVersion()
+        private async Task CheckForUpdate(string currentVersion)
         {
+            string status;
             try
             {
-                string installDir = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location);
-                string versionFile = Path.Combine(installDir, "version.txt");
-
-                if (File.Exists(versionFile))
-                {
-                    return File.ReadAllText(versionFile).Trim();
-                }
+                using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+                status = await YakUpdateChecker.CheckAsync(MetaHttp.Client, currentVersion, timeout.Token).ConfigureAwait(false);
             }
-            catch
+            catch (OperationCanceledException)
             {
-                // Ignore errors reading file
-            }
-
-            // Fallback to assembly version
-            return Assembly.GetExecutingAssembly().GetName().Version.ToString();
-        }
-
-        private async Task PerformUpdate(string[] urls)
-        {
-            try
-            {
-                _statusMessage = "Downloading update...";
-                UpdateStatus();
-
-                string tempFile = Path.GetTempFileName();
-                string installDir = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location);
-
-                var client = MetaHttp.Client;
-                string lastError = "no download location configured";
-                bool downloaded = false;
-                foreach (var url in urls)
-                {
-                    try
-                    {
-                        // Append timestamp to URL to prevent caching
-                        string downloadUrl = url + (url.Contains("?") ? "&" : "?") + $"t={DateTime.Now.Ticks}";
-                        using var cts = new System.Threading.CancellationTokenSource(TimeSpan.FromMinutes(3));
-                        using var response = await client.GetAsync(downloadUrl, cts.Token);
-                        if (!response.IsSuccessStatusCode)
-                        {
-                            lastError = $"{url}: HTTP {(int)response.StatusCode}";
-                            continue;
-                        }
-                        using (var fs = new FileStream(tempFile, FileMode.Create))
-                        {
-                            await response.Content.CopyToAsync(fs);
-                        }
-                        // Make sure we really got a zip archive and not an HTML error page.
-                        using (var check = ZipFile.OpenRead(tempFile))
-                        {
-                            if (check.Entries.Count == 0) throw new Exception("empty archive");
-                        }
-                        downloaded = true;
-                        break;
-                    }
-                    catch (Exception ex)
-                    {
-                        lastError = $"{url}: {ex.GetBaseException().Message}";
-                    }
-                }
-
-                if (!downloaded)
-                    throw new Exception($"No update server reachable ({lastError})");
-
-                _statusMessage = "Checking version...";
-                UpdateStatus();
-
-                // Check version before installing
-                bool isNewVersion = true;
-                string remoteVersion = "";
-
-                using (var archive = ZipFile.OpenRead(tempFile))
-                {
-                    // Find version.txt anywhere in the archive
-                    var versionEntry = archive.Entries.FirstOrDefault(e => e.Name.Equals("version.txt", StringComparison.OrdinalIgnoreCase));
-                    
-                    if (versionEntry != null)
-                    {
-                        using (var reader = new StreamReader(versionEntry.Open()))
-                        {
-                            remoteVersion = reader.ReadToEnd().Trim();
-                        }
-
-                        string localVersionStr = GetCurrentVersion();
-                        
-                        if (Version.TryParse(remoteVersion, out Version rVer) && Version.TryParse(localVersionStr, out Version lVer))
-                        {
-                            if (rVer <= lVer)
-                            {
-                                isNewVersion = false;
-                            }
-                        }
-                        else
-                        {
-                            // Fallback to string equality if parsing fails
-                            if (string.Equals(remoteVersion, localVersionStr, StringComparison.OrdinalIgnoreCase))
-                            {
-                                isNewVersion = false;
-                            }
-                        }
-                    }
-                }
-
-                if (!isNewVersion)
-                {
-                    _statusMessage = $"You have the latest version ({remoteVersion}). No update needed.";
-                    // Cleanup temp file
-                    if (File.Exists(tempFile))
-                        File.Delete(tempFile);
-                    return;
-                }
-
-                _statusMessage = "Installing...";
-                UpdateStatus();
-
-                // Extract and replace
-                using (var archive = ZipFile.OpenRead(tempFile))
-                {
-                    foreach (var entry in archive.Entries)
-                    {
-                        // Skip directories
-                        if (string.IsNullOrEmpty(entry.Name)) continue;
-
-                        string destFileName = entry.Name;
-                        string targetSubDir = "";
-
-                        // Check if it belongs to Templates
-                        // We look for "Templates" in the path segments
-                        var parts = entry.FullName.Split(new[] { '/', '\\' }, StringSplitOptions.RemoveEmptyEntries);
-                        if (parts.Any(p => p.Equals("Templates", StringComparison.OrdinalIgnoreCase)))
-                        {
-                            targetSubDir = "Templates";
-                        }
-
-                        string destPath = Path.Combine(installDir, targetSubDir, destFileName);
-                        string destDir = Path.GetDirectoryName(destPath);
-
-                        if (!Directory.Exists(destDir))
-                            Directory.CreateDirectory(destDir);
-
-                        // Handle locked files by renaming
-                        if (File.Exists(destPath))
-                        {
-                            try
-                            {
-                                string oldPath = destPath + ".old";
-                                if (File.Exists(oldPath))
-                                    File.Delete(oldPath);
-                                
-                                File.Move(destPath, oldPath);
-                            }
-                            catch (Exception ex)
-                            {
-                                _statusMessage = $"Error renaming {entry.Name}: {ex.Message}";
-                            }
-                        }
-
-                        // Extract new file
-                        entry.ExtractToFile(destPath, true);
-                    }
-                }
-
-                // Cleanup accidental subdirectory if it exists
-                string accidentalDir = Path.Combine(installDir, "MetaMAP_Manual_New");
-                if (Directory.Exists(accidentalDir))
-                {
-                    try
-                    {
-                        Directory.Delete(accidentalDir, true);
-                    }
-                    catch
-                    {
-                        // Ignore cleanup errors
-                    }
-                }
-
-                // Cleanup
-                if (File.Exists(tempFile))
-                    File.Delete(tempFile);
-
-                _statusMessage = "Success! Please restart Rhino to apply changes."+ $"You have the latest version ({remoteVersion}), now.";
+                status = "Yak update check timed out. " + YakUpdateChecker.InstallInstructions;
             }
             catch (Exception ex)
             {
-                _statusMessage = $"Update Failed: {ex.Message}";
+                status = $"Could not check Yak: {ex.Message}. " + YakUpdateChecker.InstallInstructions;
             }
-            finally
-            {
-                _isUpdating = false;
-                UpdateStatus();
-            }
-        }
 
-        private void UpdateStatus()
-        {
-            // Request a solution expire on the UI thread to update the output message
-            Rhino.RhinoApp.InvokeOnUiThread((Action)delegate
+            // All component state and solution changes happen on Rhino's UI thread.
+            Rhino.RhinoApp.InvokeOnUiThread((Action)(() =>
             {
-                ExpireSolution(true);
-            });
+                _statusMessage = status;
+                _isChecking = false;
+                if (OnPingDocument() != null)
+                    ExpireSolution(true);
+            }));
         }
     }
 }

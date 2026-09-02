@@ -60,6 +60,9 @@ jobs:
       - name: Validate Grasshopper templates
         run: python3 scripts/check_templates.py Templates
 
+      - name: Check Yak update notifications
+        run: dotnet run --project tests/MetaMAP.UpdateChecks -c Release
+
       - name: Install the Yak CLI
         run: |
           curl -sSL -o /usr/local/bin/yak "https://files.mcneel.com/yak/tools/${YAK_VERSION}/linux-x64/yak"
@@ -82,13 +85,6 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: MetaMAP
-          path: |
-            bin/Release/net7.0/dist
-            bin/Release/net7.0/MetaMAP_Manual_New.zip
-
-      - uses: actions/upload-artifact@v4
-        with:
           name: MetaMAP-yak
           path: bin/Release/net7.0/dist/*.yak
 
@@ -101,20 +97,18 @@ jobs:
     steps:
       - uses: actions/download-artifact@v4
         with:
-          name: MetaMAP
-          path: artifact
-
-      - uses: actions/download-artifact@v4
-        with:
           name: MetaMAP-yak
           path: yak
 
-      - name: Create GitHub release with the update archive and the Yak package
+      - name: Create GitHub release with the Yak package
         uses: softprops/action-gh-release@v2
         with:
-          files: |
-            artifact/MetaMAP_Manual_New.zip
-            yak/*.yak
+          files: yak/*.yak
+          fail_on_unmatched_files: true
+          body: |
+            Install or update MetaMAP through Rhino's `_PackageManager`: search for **MetaMAP**, install the latest available version, and restart Rhino.
+
+            MetaUPDATE checks Yak for new versions and displays installation instructions. Installation is managed by Rhino Package Manager.
           generate_release_notes: true
 
   # Publishes to the Rhino Package Manager (https://yak.rhino3d.com).

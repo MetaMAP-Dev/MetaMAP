@@ -1,4 +1,4 @@
-﻿<?xml version="1.0" encoding="utf-8" standalone="yes"?>
+<?xml version="1.0" encoding="utf-8" standalone="yes"?>
 <Archive name="Root">
   <!--Grasshopper archive-->
   <!--Grasshopper and GH_IO.dll are copyrighted by Robert McNeel & Associates-->
@@ -381,7 +381,7 @@
               <chunks count="1">
                 <chunk name="Container">
                   <items count="4">
-                    <item name="Description" type_name="gh_string" type_code="10">Update MetaMAP to the latest version from a URL</item>
+                    <item name="Description" type_name="gh_string" type_code="10">Check Yak for MetaMAP updates and install through Rhino Package Manager</item>
                     <item name="InstanceGuid" type_name="gh_guid" type_code="9">43640773-bf9e-481c-9512-2d6460a57731</item>
                     <item name="Name" type_name="gh_string" type_code="10">MetaUPDATE</item>
                     <item name="NickName" type_name="gh_string" type_code="10">MetaUPDATE</item>
@@ -403,7 +403,7 @@
                     </chunk>
                     <chunk name="param_input" index="0">
                       <items count="7">
-                        <item name="Description" type_name="gh_string" type_code="10">Set to true to start update</item>
+                        <item name="Description" type_name="gh_string" type_code="10">Set to true to check Yak for a new version. Install updates through Rhino Package Manager.</item>
                         <item name="InstanceGuid" type_name="gh_guid" type_code="9">3edfafde-7090-4093-9c35-7b8e37e932e7</item>
                         <item name="Name" type_name="gh_string" type_code="10">Update</item>
                         <item name="NickName" type_name="gh_string" type_code="10">Update</item>
@@ -450,7 +450,7 @@
                     </chunk>
                     <chunk name="param_output" index="0">
                       <items count="6">
-                        <item name="Description" type_name="gh_string" type_code="10">Update status</item>
+                        <item name="Description" type_name="gh_string" type_code="10">Yak update check and Package Manager instructions</item>
                         <item name="InstanceGuid" type_name="gh_guid" type_code="9">90fe734c-dbf6-4635-ae42-3b81fbbcd6e6</item>
                         <item name="Name" type_name="gh_string" type_code="10">Status</item>
                         <item name="NickName" type_name="gh_string" type_code="10">Status</item>
@@ -476,7 +476,7 @@
                     </chunk>
                     <chunk name="param_output" index="1">
                       <items count="6">
-                        <item name="Description" type_name="gh_string" type_code="10">Currently installed version</item>
+                        <item name="Description" type_name="gh_string" type_code="10">Currently loaded version</item>
                         <item name="InstanceGuid" type_name="gh_guid" type_code="9">c849e6b3-c49d-499e-a3ec-5d2f381beb38</item>
                         <item name="Name" type_name="gh_string" type_code="10">Your Version</item>
                         <item name="NickName" type_name="gh_string" type_code="10">Your Version</item>

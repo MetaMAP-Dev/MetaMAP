@@ -13,9 +13,9 @@
         <Keyword3>analysis</Keyword3>
         <NeutralLanguage>en-US</NeutralLanguage>
         <PackageIcon>Resources\MetaBuilding.png</PackageIcon>
-        <Version>0.0.59</Version>
-        <AssemblyVersion>0.0.59</AssemblyVersion>
-        <FileVersion>0.0.59</FileVersion>
+        <Version>0.0.60</Version>
+        <AssemblyVersion>0.0.60</AssemblyVersion>
+        <FileVersion>0.0.60</FileVersion>
         <LangVersion>12</LangVersion>
         <RootNamespace>MetaMAP</RootNamespace>
         <GenerateAssemblyInfo>true</GenerateAssemblyInfo>
@@ -50,6 +50,7 @@
 
     <!-- Icons, Leaflet script and stylesheet are plain manifest resources (see src/MetaResources.cs). -->
     <ItemGroup>
+        <Compile Remove="tests\**\*.cs" />
         <EmbeddedResource Include="Resources\*.png;Resources\leaflet.css;Resources\leaflet.js" LogicalName="MetaMAP.Resources.%(Filename)%(Extension)" />
         <None Include="Templates\**\*.*">
             <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
@@ -70,13 +71,11 @@
         <Copy SourceFiles="$(PkgNewtonsoft_Json)\lib\net6.0\Newtonsoft.Json.dll" DestinationFolder="$(TargetDir)" />
     </Target>
 
-    <!-- Assemble a clean, installable folder: exactly what a user drops into the Grasshopper
-         Libraries folder or what "yak build" packages. -->
+    <!-- Assemble the clean folder that "yak build" packages. -->
     <Target Name="Distribution" AfterTargets="CopyAndRenameDll" DependsOnTargets="CopyVersionToOutput">
         <!-- Evaluated here (not at project level) because $(TargetDir) is only known once the SDK targets ran. -->
         <PropertyGroup>
             <DistDir>$(TargetDir)dist$([System.IO.Path]::DirectorySeparatorChar)</DistDir>
-            <ZipPath>$(TargetDir)MetaMAP_Manual_New.zip</ZipPath>
         </PropertyGroup>
         <ItemGroup>
             <DistTemplates Include="$(MSBuildProjectDirectory)\Templates\**\*.gh*" />
@@ -87,23 +86,6 @@
         <!-- manifest.yml points at this icon; the package manager shows it in the plug-in list. -->
         <Copy SourceFiles="$(MSBuildProjectDirectory)\Resources\MetaBuilding.png" DestinationFolder="$(DistDir)Resources" />
         <Copy SourceFiles="@(DistTemplates)" DestinationFiles="@(DistTemplates->'$(DistDir)Templates\%(RecursiveDir)%(Filename)%(Extension)')" />
-        <Delete Files="$(ZipPath)" Condition="Exists('$(ZipPath)')" />
-    </Target>
-
-    <Target Name="ZipDistribution" AfterTargets="Distribution" Condition="'$(OS)' == 'Windows_NT'">
-        <PropertyGroup>
-            <DistDir>$(TargetDir)dist\</DistDir>
-            <ZipPath>$(TargetDir)MetaMAP_Manual_New.zip</ZipPath>
-        </PropertyGroup>
-        <Exec Command="powershell -NoProfile -Command &quot;Compress-Archive -Path '$(DistDir)*' -DestinationPath '$(ZipPath)' -Force&quot;" />
-    </Target>
-
-    <Target Name="ZipDistributionUnix" AfterTargets="Distribution" Condition="'$(OS)' != 'Windows_NT'">
-        <PropertyGroup>
-            <DistDir>$(TargetDir)dist/</DistDir>
-            <ZipPath>$(TargetDir)MetaMAP_Manual_New.zip</ZipPath>
-        </PropertyGroup>
-        <Exec Command="zip -q -r &quot;$(ZipPath)&quot; ." WorkingDirectory="$(DistDir)" />
     </Target>
 
 </Project>

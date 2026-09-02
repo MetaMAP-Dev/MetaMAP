@@ -30,8 +30,7 @@
    - Fail if a Rhino-provided assembly sneaked into the distribution folder,
      or if the tag does not match `manifest.yml` / `MetaMAP.csproj`
    - Build the Yak package (`metamap-<version>-rh8_0-any.yak`)
-   - Create a new GitHub Release for `v*` tags with `MetaMAP_Manual_New.zip`
-     and the `.yak` file attached
+   - Create a new GitHub Release for `v*` tags with the `.yak` file attached
    - **Push the package to the Rhino Package Manager** (job `publish-yak`)
 
 ## One-time setup for automatic Yak publishing
@@ -63,13 +62,19 @@ Grasshopper package so the Yak package carries the `rh8_0-any` tag and is
 offered to every Rhino 8 user on Windows and macOS. Bumping the Grasshopper
 NuGet version in `MetaMAP.csproj` raises that minimum (CI fails on purpose).
 
-## How the Auto-Update Works
+## How Update Checks Work
 
-1. Users click the "Update" button in the MetaUPDATE component
-2. The component downloads `MetaMAP_Manual_New.zip` from
-   `https://github.com/metamap-dev/metamap/releases/latest/download/` (falling back to the
-   legacy locations listed in `MetaUpdateCMP.UpdateUrls`)
-3. Compares `version.txt` and installs if newer
+1. Users set the `Update` input to true in the MetaUPDATE component.
+2. The component reads public metadata from `https://yak.rhino3d.com/packages/metamap`
+   and compares the published version with the loaded assembly version.
+3. The Status output reports a newer version, an up-to-date installation, or a failed check.
+   Results remain visible after releasing the button.
+4. To install, run `_PackageManager` in Rhino, search for MetaMAP, install the latest
+   available version, and restart Rhino. MetaUPDATE does not download or replace plugin files.
+
+New releases use Yak packages only. Existing release archives remain available for legacy
+installations. Users moving from manual installation should remove old MetaMAP files from
+Grasshopper's `Libraries` folder before installing through Package Manager.
 
 ## Publishing to Yak manually
 
@@ -93,20 +98,19 @@ package by hand (for example from a machine without GitHub access):
    cd bin/Release/net7.0/dist
    yak build
    ```
-   This produces `metamap-0.0.59-rh8_0-any.yak` — the `any` tag means one
+   This produces `metamap-0.0.60-rh8_0-any.yak` — the `any` tag means one
    package serves both Windows and Mac.
 
 3. **Push** (requires being logged in via `yak login`):
    ```bash
-   yak push metamap-0.0.59-rh8_0-any.yak
+   yak push metamap-0.0.60-rh8_0-any.yak
    ```
 
 Keep `manifest.yml`'s `version` in sync with `MetaMAP.csproj` on every release.
 
 ## Benefits
 
-- ✅ **Automatic builds** - No manual zip creation
+- ✅ **Automatic builds** - Yak packages built and published by CI
 - ✅ **Version control** - All releases tracked in GitHub
-- ✅ **Reliable hosting** - GitHub's CDN
-- ✅ **Fallback URL** - Still works if GitHub is down
-- ✅ **Easy rollback** - Can download any previous release
+- ✅ **Managed installation** - Rhino Package Manager installs updates
+- ✅ **Release downloads** - Yak packages are also attached to GitHub releases
