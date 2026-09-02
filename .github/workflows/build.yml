@@ -1,0 +1,163 @@
+name: Build
+
+on:
+  push:
+    branches: ["**"]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      publish_to_test_server:
+        description: "Push the package to https://test.yak.rhino3d.com (dry run of the Yak deployment)"
+        type: boolean
+        default: false
+
+env:
+  YAK_VERSION: "0.13.0"
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+
+      - name: Build (cross-platform net7.0 assembly)
+        run: dotnet build MetaMAP.csproj -c Release -f net7.0 -warnaserror:CS0618
+
+      - name: Check that only the intended files are shipped
+        id: version
+        run: |
+          ls -la bin/Release/net7.0/dist
+          test -f bin/Release/net7.0/dist/MetaMAP.gha
+          test -f bin/Release/net7.0/dist/Newtonsoft.Json.dll
+          test -f bin/Release/net7.0/dist/manifest.yml
+          test -f bin/Release/net7.0/dist/version.txt
+          test -d bin/Release/net7.0/dist/Templates
+          # Rhino provides these; shipping them breaks loading on macOS.
+          for forbidden in Eto.dll System.Drawing.Common.dll RhinoCommon.dll Grasshopper.dll System.Windows.Forms.dll; do
+            if [ -f "bin/Release/net7.0/dist/$forbidden" ]; then echo "$forbidden must not be shipped"; exit 1; fi
+          done
+          # manifest.yml and the assembly must agree on the version.
+          manifest=$(grep -E '^version:' manifest.yml | awk '{print $2}')
+          built=$(cat bin/Release/net7.0/dist/version.txt | tr -d '[:space:]')
+          echo "manifest=$manifest built=$built"
+          test "$manifest" = "$built"
+          echo "version=$built" >> "$GITHUB_OUTPUT"
+
+      - name: Check that the tag matches the version
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          echo "tag=$tag version=${{ steps.version.outputs.version }}"
+          test "$tag" = "${{ steps.version.outputs.version }}"
+
+      - name: Validate Grasshopper templates
+        run: python3 scripts/check_templates.py Templates
+
+      - name: Install the Yak CLI
+        run: |
+          curl -sSL -o /usr/local/bin/yak "https://files.mcneel.com/yak/tools/${YAK_VERSION}/linux-x64/yak"
+          chmod +x /usr/local/bin/yak
+          yak --version
+        env:
+          DOTNET_ROLL_FORWARD: Major
+
+      - name: Build the Yak package
+        working-directory: bin/Release/net7.0/dist
+        env:
+          DOTNET_ROLL_FORWARD: Major
+        run: |
+          yak build
+          ls -la *.yak
+          # The distribution tag decides which Rhino versions see the package: it must be
+          # "rh8_0-any" (Rhino 8.0+, Windows and Mac). A newer tag means the Grasshopper
+          # NuGet reference in MetaMAP.csproj was bumped past the 8.0 release.
+          ls *.yak | grep -q -- '-rh8_0-any\.yak$' || { echo "unexpected distribution tag"; exit 1; }
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: MetaMAP
+          path: |
+            bin/Release/net7.0/dist
+            bin/Release/net7.0/MetaMAP_Manual_New.zip
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: MetaMAP-yak
+          path: bin/Release/net7.0/dist/*.yak
+
+  release:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: MetaMAP
+          path: artifact
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: MetaMAP-yak
+          path: yak
+
+      - name: Create GitHub release with the update archive and the Yak package
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            artifact/MetaMAP_Manual_New.zip
+            yak/*.yak
+          generate_release_notes: true
+
+  # Publishes to the Rhino Package Manager (https://yak.rhino3d.com).
+  # Runs for v* tags, or on demand against the test server via workflow_dispatch.
+  # Requires the repository secret YAK_TOKEN (see RELEASE.md: `yak login --ci`).
+  publish-yak:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.publish_to_test_server)
+    runs-on: ubuntu-latest
+    environment: yak
+    steps:
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: MetaMAP-yak
+          path: yak
+
+      - name: Install the Yak CLI
+        run: |
+          curl -sSL -o /usr/local/bin/yak "https://files.mcneel.com/yak/tools/${YAK_VERSION}/linux-x64/yak"
+          chmod +x /usr/local/bin/yak
+          yak --version
+        env:
+          DOTNET_ROLL_FORWARD: Major
+
+      - name: Push to the Yak server
+        env:
+          DOTNET_ROLL_FORWARD: Major
+          YAK_TOKEN: ${{ secrets.YAK_TOKEN }}
+          TEST_SERVER: ${{ github.event_name == 'workflow_dispatch' && inputs.publish_to_test_server }}
+        run: |
+          if [ -z "$YAK_TOKEN" ]; then
+            echo "::error::The YAK_TOKEN secret is not set. Run 'yak login --ci' locally and add the printed key as a repository secret named YAK_TOKEN (see RELEASE.md)."
+            exit 1
+          fi
+          pkg=$(ls yak/*.yak | head -n 1)
+          if [ "$TEST_SERVER" = "true" ]; then
+            echo "Pushing $pkg to the TEST server"
+            yak push --source https://test.yak.rhino3d.com "$pkg"
+          else
+            echo "Pushing $pkg to https://yak.rhino3d.com"
+            yak push "$pkg"
+          fi

@@ -1,4 +1,4 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 
     <PropertyGroup>
         <!-- net7.0 (no -windows suffix, no UseWindowsForms) builds one cross-platform
@@ -13,11 +13,49 @@
         <Keyword3>analysis</Keyword3>
         <NeutralLanguage>en-US</NeutralLanguage>
         <PackageIcon>Resources\MetaBuilding.png</PackageIcon>
-        <Version>0.0.57</Version>
-        <AssemblyVersion>0.0.57</AssemblyVersion>
-        <FileVersion>0.0.57</FileVersion>
+        <Version>0.0.59</Version>
+        <AssemblyVersion>0.0.59</AssemblyVersion>
+        <FileVersion>0.0.59</FileVersion>
         <LangVersion>12</LangVersion>
+        <RootNamespace>MetaMAP</RootNamespace>
+        <GenerateAssemblyInfo>true</GenerateAssemblyInfo>
+        <NoWarn>$(NoWarn);CA1416;NU1701</NoWarn>
+        <!-- Only the assemblies listed in the Distribution target are shipped. Rhino 8 already
+             provides RhinoCommon, Grasshopper, Eto, System.Drawing and System.Windows.Forms on
+             both platforms; shipping our own copies next to the .gha breaks loading on macOS
+             ("Ribbon could not be populated", Eto windows failing to open). -->
+        <CopyLocalLockFileAssemblies>false</CopyLocalLockFileAssemblies>
     </PropertyGroup>
+
+    <ItemGroup>
+        <!-- Rhino / Grasshopper API (compile-time only; Rhino supplies them at runtime).
+             Deliberately the first Rhino 8 release: the Yak package inherits its minimum Rhino
+             version from this reference (distribution tag rh8_0-any = every Rhino 8 on Windows and Mac). -->
+        <PackageReference Include="Grasshopper" Version="8.0.23304.9001" IncludeAssets="compile;build" />
+        <!-- System.Drawing types used by the Grasshopper API (icons, canvas rendering). Compile-time
+             only: Rhino ships its own System.Drawing.Common on both platforms. -->
+        <PackageReference Include="System.Drawing.Common" Version="7.0.0" ExcludeAssets="runtime" />
+        <!-- Shipped next to the .gha (see Distribution target). -->
+        <PackageReference Include="Newtonsoft.Json" Version="13.0.3" GeneratePathProperty="true" />
+    </ItemGroup>
+
+    <!-- GH_Component's menu API (AppendAdditionalComponentMenuItems) is typed against
+         System.Windows.Forms regardless of platform. Reference the compile-time-only reference
+         assemblies; at runtime Rhino/Grasshopper itself supplies the real implementation on both
+         Windows and Mac. See https://discourse.mcneel.com/t/windows-forms-on-gh-and-rhino-8/171307 -->
+    <ItemGroup>
+        <PackageReference Include="Microsoft.WindowsDesktop.App.Ref" Version="7.0.0" GeneratePathProperty="true" ExcludeAssets="all" />
+        <Reference Include="$(PkgMicrosoft_WindowsDesktop_App_Ref)\ref\net7.0\System.Windows.Forms.dll" Private="false" />
+    </ItemGroup>
+
+    <!-- Icons, Leaflet script and stylesheet are plain manifest resources (see src/MetaResources.cs). -->
+    <ItemGroup>
+        <EmbeddedResource Include="Resources\*.png;Resources\leaflet.css;Resources\leaflet.js" LogicalName="MetaMAP.Resources.%(Filename)%(Extension)" />
+        <None Include="Templates\**\*.*">
+            <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+            <Link>Templates\%(RecursiveDir)%(Filename)%(Extension)</Link>
+        </None>
+    </ItemGroup>
 
     <Target Name="WriteVersionToFile" BeforeTargets="BeforeBuild">
         <WriteLinesToFile File="version.txt" Lines="$(Version)" Overwrite="true" />
@@ -29,82 +67,43 @@
 
     <Target Name="CopyAndRenameDll" AfterTargets="AfterBuild">
         <Copy SourceFiles="$(TargetDir)$(TargetName).dll" DestinationFiles="$(TargetDir)$(TargetName).gha" />
+        <Copy SourceFiles="$(PkgNewtonsoft_Json)\lib\net6.0\Newtonsoft.Json.dll" DestinationFolder="$(TargetDir)" />
     </Target>
 
-    <Target Name="DeleteOldZip" AfterTargets="CopyAndRenameDll">
+    <!-- Assemble a clean, installable folder: exactly what a user drops into the Grasshopper
+         Libraries folder or what "yak build" packages. -->
+    <Target Name="Distribution" AfterTargets="CopyAndRenameDll" DependsOnTargets="CopyVersionToOutput">
+        <!-- Evaluated here (not at project level) because $(TargetDir) is only known once the SDK targets ran. -->
         <PropertyGroup>
+            <DistDir>$(TargetDir)dist$([System.IO.Path]::DirectorySeparatorChar)</DistDir>
             <ZipPath>$(TargetDir)MetaMAP_Manual_New.zip</ZipPath>
         </PropertyGroup>
+        <ItemGroup>
+            <DistTemplates Include="$(MSBuildProjectDirectory)\Templates\**\*.gh*" />
+        </ItemGroup>
+        <RemoveDir Directories="$(DistDir)" />
+        <MakeDir Directories="$(DistDir)" />
+        <Copy SourceFiles="$(TargetDir)$(TargetName).gha;$(TargetDir)Newtonsoft.Json.dll;$(TargetDir)version.txt;$(MSBuildProjectDirectory)\manifest.yml" DestinationFolder="$(DistDir)" />
+        <!-- manifest.yml points at this icon; the package manager shows it in the plug-in list. -->
+        <Copy SourceFiles="$(MSBuildProjectDirectory)\Resources\MetaBuilding.png" DestinationFolder="$(DistDir)Resources" />
+        <Copy SourceFiles="@(DistTemplates)" DestinationFiles="@(DistTemplates->'$(DistDir)Templates\%(RecursiveDir)%(Filename)%(Extension)')" />
         <Delete Files="$(ZipPath)" Condition="Exists('$(ZipPath)')" />
     </Target>
 
-    <Target Name="ZipDistribution" AfterTargets="DeleteOldZip" DependsOnTargets="CopyVersionToOutput" Condition="'$(OS)' == 'Windows_NT'">
+    <Target Name="ZipDistribution" AfterTargets="Distribution" Condition="'$(OS)' == 'Windows_NT'">
         <PropertyGroup>
+            <DistDir>$(TargetDir)dist\</DistDir>
             <ZipPath>$(TargetDir)MetaMAP_Manual_New.zip</ZipPath>
         </PropertyGroup>
-        <Exec Command="powershell -Command &quot;Compress-Archive -Path '$(TargetDir)$(TargetName).gha', '$(TargetDir)*.dll', '$(TargetDir)$(TargetName).deps.json', '$(TargetDir)version.txt', '$(TargetDir)Templates' -DestinationPath '$(ZipPath)' -Force&quot;" />
+        <Exec Command="powershell -NoProfile -Command &quot;Compress-Archive -Path '$(DistDir)*' -DestinationPath '$(ZipPath)' -Force&quot;" />
     </Target>
 
-    <Target Name="ZipDistributionUnix" AfterTargets="DeleteOldZip" DependsOnTargets="CopyVersionToOutput" Condition="'$(OS)' != 'Windows_NT'">
+    <Target Name="ZipDistributionUnix" AfterTargets="Distribution" Condition="'$(OS)' != 'Windows_NT'">
         <PropertyGroup>
+            <DistDir>$(TargetDir)dist/</DistDir>
             <ZipPath>$(TargetDir)MetaMAP_Manual_New.zip</ZipPath>
         </PropertyGroup>
-        <Exec Command="zip -j -r &quot;$(ZipPath)&quot; &quot;$(TargetDir)$(TargetName).gha&quot; &quot;$(TargetDir)&quot;*.dll &quot;$(TargetDir)$(TargetName).deps.json&quot; &quot;$(TargetDir)version.txt&quot; &amp;&amp; cd &quot;$(TargetDir)&quot; &amp;&amp; zip -r &quot;$(ZipPath)&quot; Templates" WorkingDirectory="$(TargetDir)" />
+        <Exec Command="zip -q -r &quot;$(ZipPath)&quot; ." WorkingDirectory="$(DistDir)" />
     </Target>
-
-    <ItemGroup>
-        <None Include="Templates\**\*.*">
-            <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-            <Link>Templates\%(RecursiveDir)%(Filename)%(Extension)</Link>
-        </None>
-    </ItemGroup>
-
-    <PropertyGroup>
-        <NoWarn>$(NoWarn);CA1416</NoWarn>
-        <NoWarn>$(NoWarn);NU1701</NoWarn>
-    </PropertyGroup>
-
-    <PropertyGroup>
-        <GenerateAssemblyInfo>true</GenerateAssemblyInfo>
-    </PropertyGroup>
-
-    <PropertyGroup>
-        <!-- Ensure all NuGet-resolved assemblies are copied to the output -->
-        <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
-    </PropertyGroup>
-
-    <ItemGroup>
-        <PackageReference Include="Grasshopper" Version="8.27.26019.16021" IncludeAssets="compile;build" />
-        <PackageReference Include="System.Drawing.Common" Version="8.0.0" />
-        <PackageReference Include="System.Resources.Extensions" Version="8.0.0" />
-        <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
-        <PackageReference Include="Eto.Forms" Version="2.7.4" />
-    </ItemGroup>
-
-    <!-- GH_Component's menu API (AppendAdditionalComponentMenuItems) is typed against
-         System.Windows.Forms regardless of platform. The Grasshopper package no longer
-         pulls this in for us, so reference the compile-time-only reference assemblies;
-         at runtime Rhino/Grasshopper itself supplies the real implementation on both
-         Windows and Mac. See https://discourse.mcneel.com/t/windows-forms-on-gh-and-rhino-8/171307 -->
-    <ItemGroup>
-        <PackageReference Include="Microsoft.WindowsDesktop.App.Ref" Version="7.0.0" GeneratePathProperty="true" ExcludeAssets="all" />
-        <Reference Include="$(PkgMicrosoft_WindowsDesktop_App_Ref)\ref\net7.0\System.Windows.Forms.dll" Private="false" />
-    </ItemGroup>
-
-
-    <ItemGroup>
-      <Compile Update="Properties\Resources.Designer.cs">
-        <DesignTime>True</DesignTime>
-        <AutoGen>True</AutoGen>
-        <DependentUpon>Resources.resx</DependentUpon>
-      </Compile>
-    </ItemGroup>
-
-    <ItemGroup>
-      <EmbeddedResource Update="Properties\Resources.resx">
-        <Generator>ResXFileCodeGenerator</Generator>
-        <LastGenOutput>Resources.Designer.cs</LastGenOutput>
-      </EmbeddedResource>
-    </ItemGroup>
 
 </Project>

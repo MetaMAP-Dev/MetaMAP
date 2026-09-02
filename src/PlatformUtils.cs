@@ -1,147 +1,113 @@
-using Eto.Drawing;
 using Eto.Forms;
 using Rhino;
+using Rhino.UI;
 using System;
+using System.Globalization;
 using System.Runtime.InteropServices;
 
 namespace MetaMap
 {
     /// <summary>
-    /// Utility class for handling platform-specific functionality and fallbacks
+    /// Platform helpers and the manual coordinate entry dialog used when no map can be shown.
     /// </summary>
     public static class PlatformUtils
     {
         /// <summary>
-        /// Tests if WebView is supported on the current platform
+        /// Shows a small Eto dialog for typing latitude / longitude by hand.
+        /// Must be called on the UI thread.
         /// </summary>
-        /// <returns>True if WebView is supported, false otherwise</returns>
-        public static bool IsWebViewSupported()
+        public static void ShowCoordinateInputDialog(double? currentLat, double? currentLng, Action<double, double> onCoordinatesSelected)
         {
             try
             {
-                // Test WebView creation on current platform
-                var testWebView = new WebView();
-                return testWebView != null;
-            }
-            catch (Exception ex)
-            {
-                RhinoApp.WriteLine($"WebView test failed: {ex.Message}");
-                return false;
-            }
-        }
-
-        /// <summary>
-        /// Shows a fallback dialog for manual coordinate input when WebView is not available
-        /// </summary>
-        /// <param name="onCoordinatesSelected">Callback when coordinates are selected</param>
-        public static void ShowCoordinateInputDialog(Action<double, double> onCoordinatesSelected)
-        {
-            try
-            {
-                // Create a simple dialog for manual coordinate input
                 var dialog = new Dialog
                 {
-                    Title = "MetaFETCH - Manual Coordinate Input",
-                    Size = new Eto.Drawing.Size(400, 200),
-                    Resizable = false
+                    Title = "MetaFETCH - Enter Coordinates",
+                    Resizable = false,
+                    Padding = new Eto.Drawing.Padding(12),
                 };
 
-                var layout = new TableLayout
-                {
-                    Spacing = new Eto.Drawing.Size(5, 5),
-                    Padding = new Eto.Drawing.Padding(10)
-                };
+                var latInput = new TextBox { PlaceholderText = "e.g. 41.041122", Width = 200 };
+                var lngInput = new TextBox { PlaceholderText = "e.g. 28.989991", Width = 200 };
+                if (currentLat.HasValue) latInput.Text = currentLat.Value.ToString("F6", CultureInfo.InvariantCulture);
+                if (currentLng.HasValue) lngInput.Text = currentLng.Value.ToString("F6", CultureInfo.InvariantCulture);
 
-                // Latitude input
-                var latLabel = new Label { Text = "Latitude:" };
-                var latInput = new TextBox { PlaceholderText = "e.g., 33.775678" };
-                layout.Rows.Add(new TableRow(latLabel, latInput));
-
-                // Longitude input
-                var lngLabel = new Label { Text = "Longitude:" };
-                var lngInput = new TextBox { PlaceholderText = "e.g., -84.395133" };
-                layout.Rows.Add(new TableRow(lngLabel, lngInput));
-
-                // Buttons
-                var buttonLayout = new TableLayout
-                {
-                    Spacing = new Eto.Drawing.Size(5, 5)
-                };
-
+                var error = new Label { TextColor = Eto.Drawing.Colors.Red, Text = "" };
                 var okButton = new Button { Text = "OK" };
                 var cancelButton = new Button { Text = "Cancel" };
 
                 okButton.Click += (s, e) =>
                 {
-                    if (double.TryParse(latInput.Text, out double lat) && 
-                        double.TryParse(lngInput.Text, out double lng))
+                    if (TryParse(latInput.Text, out double lat) && TryParse(lngInput.Text, out double lng) && GeoProjection.IsValidCoordinate(lat, lng))
                     {
-                        onCoordinatesSelected?.Invoke(lat, lng);
                         dialog.Close();
+                        onCoordinatesSelected?.Invoke(lat, lng);
                     }
                     else
                     {
-                        MessageBox.Show("Please enter valid latitude and longitude values.", "Invalid Input", MessageBoxType.Warning);
+                        error.Text = "Enter a latitude between -90 and 90 and a longitude between -180 and 180 (use a dot as decimal separator).";
+                    }
+                };
+                cancelButton.Click += (s, e) => dialog.Close();
+                dialog.DefaultButton = okButton;
+                dialog.AbortButton = cancelButton;
+
+                dialog.Content = new TableLayout
+                {
+                    Spacing = new Eto.Drawing.Size(6, 6),
+                    Rows =
+                    {
+                        new TableRow(new Label { Text = "Paste coordinates from any map service (e.g. Google Maps: right-click a place)." }),
+                        new TableRow(new TableLayout
+                        {
+                            Spacing = new Eto.Drawing.Size(6, 6),
+                            Rows =
+                            {
+                                new TableRow(new Label { Text = "Latitude:" }, latInput),
+                                new TableRow(new Label { Text = "Longitude:" }, lngInput),
+                            }
+                        }),
+                        new TableRow(error),
+                        new TableRow(new TableLayout { Spacing = new Eto.Drawing.Size(6, 0), Rows = { new TableRow(null, okButton, cancelButton) } }),
                     }
                 };
 
-                cancelButton.Click += (s, e) => dialog.Close();
-
-                buttonLayout.Rows.Add(new TableRow(null, okButton, cancelButton, null));
-                layout.Rows.Add(new TableRow(null));
-                layout.Rows.Add(new TableRow(buttonLayout));
-
-                dialog.Content = layout;
-                dialog.ShowModal();
+                Control owner = null;
+                try { owner = RhinoEtoApp.MainWindow; } catch { }
+                if (owner != null) dialog.ShowModal(owner);
+                else dialog.ShowModal();
             }
             catch (Exception ex)
             {
-                RhinoApp.WriteLine($"Error in fallback dialog: {ex.Message}");
-                MessageBox.Show($"Error creating coordinate input dialog: {ex.Message}", "Error", MessageBoxType.Error);
+                RhinoApp.WriteLine($"MetaFETCH: could not open the coordinate dialog: {ex.Message}");
+                RhinoApp.WriteLine("MetaFETCH: connect Number/Panel components to MetaBuilding and MetaTERRAIN's Latitude/Longitude inputs instead.");
             }
         }
 
-        /// <summary>
-        /// Gets the current operating system platform
-        /// </summary>
-        /// <returns>String representation of the current platform</returns>
+        private static bool TryParse(string text, out double value)
+        {
+            value = double.NaN;
+            if (string.IsNullOrWhiteSpace(text)) return false;
+            string t = text.Trim();
+            if (double.TryParse(t, NumberStyles.Float, CultureInfo.InvariantCulture, out value)) return true;
+            // Accept a comma decimal separator when there is exactly one comma and no dot.
+            if (t.IndexOf('.') < 0 && t.IndexOf(',') == t.LastIndexOf(',') && t.IndexOf(',') >= 0)
+                return double.TryParse(t.Replace(',', '.'), NumberStyles.Float, CultureInfo.InvariantCulture, out value);
+            return false;
+        }
+
         public static string GetCurrentPlatform()
         {
-            if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
-                return "Windows";
-            else if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
-                return "macOS";
-            else if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
-                return "Linux";
-            else
-                return "Unknown";
+            if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows)) return "Windows";
+            if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX)) return "macOS";
+            if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux)) return "Linux";
+            return "Unknown";
         }
 
-        /// <summary>
-        /// Checks if the current platform is macOS
-        /// </summary>
-        /// <returns>True if running on macOS</returns>
-        public static bool IsMacOS()
-        {
-            return RuntimeInformation.IsOSPlatform(OSPlatform.OSX);
-        }
+        public static bool IsMacOS() => RuntimeInformation.IsOSPlatform(OSPlatform.OSX);
 
-        /// <summary>
-        /// Checks if the current platform is Windows
-        /// </summary>
-        /// <returns>True if running on Windows</returns>
-        public static bool IsWindows()
-        {
-            return RuntimeInformation.IsOSPlatform(OSPlatform.Windows);
-        }
+        public static bool IsWindows() => RuntimeInformation.IsOSPlatform(OSPlatform.Windows);
 
-        /// <summary>
-        /// Checks if the current platform is Linux
-        /// </summary>
-        /// <returns>True if running on Linux</returns>
-        public static bool IsLinux()
-        {
-            return RuntimeInformation.IsOSPlatform(OSPlatform.Linux);
-        }
+        public static bool IsLinux() => RuntimeInformation.IsOSPlatform(OSPlatform.Linux);
     }
 }

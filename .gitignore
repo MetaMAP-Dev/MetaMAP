@@ -44,3 +44,6 @@ build_log.txt
 
 ## Serena MCP local index
 .serena/
+
+## Distribution folder produced by the build (see MetaMAP.csproj Distribution target)
+/dist/

@@ -9,7 +9,6 @@ using System.IO;
 using System.Linq;
 using System.Reflection;
 using System.Windows.Forms;
-using MetaMAP.Properties;
 
 namespace MetaMap
 {
@@ -27,23 +26,7 @@ namespace MetaMap
 
         public override Guid ComponentGuid => new Guid("23456789-2345-2345-2345-234567890123");
 
-        protected override Bitmap Icon
-        {
-            get
-            {
-                if (!PlatformUtils.IsWindows())
-                    return null;
-
-                var iconBytes = Resources.ResourceManager.GetObject("MetaMAP_template") as byte[];
-                if (iconBytes != null)
-                    using (var ms = new MemoryStream(iconBytes))
-                    {
-                        return new Bitmap(ms);
-                    }
-
-                return null;
-            }
-        }
+        protected override Bitmap Icon => MetaResources.GetIcon("MetaTemplate.png");
 
         protected override void RegisterInputParams(GH_InputParamManager pManager)
         {
@@ -61,12 +44,18 @@ namespace MetaMap
             this.folderList = new List<string>();
             this.filesList = new List<List<string>>();
 
-            // Get plugin directory and add default Templates folder
-            string pluginDir = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location);
-            var dirs = new List<string>
+            // Default Templates folder next to the plugin (works for manual installs and Yak packages).
+            var dirs = new List<string>();
+            try
             {
-                Path.Combine(pluginDir, "Templates")
-            };
+                string pluginDir = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location);
+                if (!string.IsNullOrEmpty(pluginDir))
+                    dirs.Add(Path.Combine(pluginDir, "Templates"));
+            }
+            catch
+            {
+                // Location can be empty for dynamically loaded assemblies; user folders still work.
+            }
 
             // Add any additional directories from input
             var additionalDirs = new List<string>();
@@ -74,21 +63,34 @@ namespace MetaMap
             dirs.AddRange(additionalDirs);
 
             // Filter to only existing directories
-            dirs = dirs.Where(d => Directory.Exists(d)).ToList();
+            dirs = dirs.Where(d => !string.IsNullOrWhiteSpace(d) && Directory.Exists(d)).Distinct().ToList();
 
             // Scan each directory for template files
             foreach (var dir in dirs)
             {
-                var fs = Directory.GetFiles(dir, "*.gh*", SearchOption.AllDirectories)
-                    .Where(f => f.EndsWith(".gh") || f.EndsWith(".ghx"))
-                    .ToList();
-                
+                List<string> fs;
+                try
+                {
+                    fs = Directory.GetFiles(dir, "*.gh*", SearchOption.AllDirectories)
+                        .Where(f => f.EndsWith(".gh", StringComparison.OrdinalIgnoreCase) || f.EndsWith(".ghx", StringComparison.OrdinalIgnoreCase))
+                        .OrderBy(f => f, StringComparer.OrdinalIgnoreCase)
+                        .ToList();
+                }
+                catch (Exception ex)
+                {
+                    AddRuntimeMessage(GH_RuntimeMessageLevel.Warning, $"Cannot read {dir}: {ex.Message}");
+                    continue;
+                }
+
                 if (fs.Any())
                 {
-                    this.folderList.Add(Path.GetDirectoryName(Path.Combine(dir, "test.txt")));
+                    this.folderList.Add(Path.GetFullPath(dir).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
                     this.filesList.Add(fs);
                 }
             }
+
+            if (this.filesList.Count == 0)
+                AddRuntimeMessage(GH_RuntimeMessageLevel.Remark, "No templates found. Add a folder path to the Directory input.");
 
             DA.SetDataList(0, this.filesList.SelectMany(f => f));
         }
@@ -104,43 +106,56 @@ namespace MetaMap
 
         private void CreateTemplateFromFile(string FilePath)
         {
-            var canvasCurrent = Grasshopper.Instances.ActiveCanvas;
-            var f = canvasCurrent.Focused;
-            var isFileExist = File.Exists(FilePath);
+            // Note: the canvas is deliberately NOT required to be focused. On macOS the context
+            // menu takes keyboard focus away from the canvas, which used to make this a silent no-op.
+            if (string.IsNullOrEmpty(FilePath) || !File.Exists(FilePath))
+            {
+                Rhino.UI.Dialogs.ShowMessage($"Template not found:{Environment.NewLine}{FilePath}", "MetaMAP");
+                return;
+            }
 
-            if (f && isFileExist)
+            var docCurrent = OnPingDocument() ?? Grasshopper.Instances.ActiveCanvas?.Document;
+            if (docCurrent == null)
+            {
+                Rhino.UI.Dialogs.ShowMessage("No active Grasshopper document.", "MetaMAP");
+                return;
+            }
+
+            try
             {
                 var io = new GH_DocumentIO();
-                var success = io.Open(FilePath);
-
-                if (!success)
+                if (!io.Open(FilePath) || io.Document == null)
                 {
-                    MessageBox.Show("Failed to load template.");
+                    Rhino.UI.Dialogs.ShowMessage($"Failed to load template:{Environment.NewLine}{FilePath}", "MetaMAP");
                     return;
                 }
 
                 var docTemp = io.Document;
 
-                // Select all objects in template
+                // Generate new IDs to avoid conflicts with objects already on the canvas
                 docTemp.SelectAll();
-                
-                // Generate new IDs to avoid conflicts
                 docTemp.MutateAllIds();
 
                 // Move template to position near this component
                 var box = docTemp.BoundingBox(false);
                 var vec = GetMoveVector(box.Location);
                 docTemp.TranslateObjects(vec, true);
-
                 docTemp.ExpireSolution();
 
-                // Merge template into current document
-                var docCurrent = canvasCurrent.Document;
+                // Merge template into current document and leave the new objects selected
                 docCurrent.DeselectAll();
                 docCurrent.MergeDocument(docTemp);
-                
-                // Select the newly added objects
                 docTemp.SelectAll();
+
+                var canvas = Grasshopper.Instances.ActiveCanvas;
+                if (canvas != null)
+                {
+                    canvas.Refresh();
+                }
+            }
+            catch (Exception ex)
+            {
+                Rhino.UI.Dialogs.ShowMessage($"Failed to insert template:{Environment.NewLine}{ex.Message}", "MetaMAP");
             }
         }
 
@@ -171,14 +186,20 @@ namespace MetaMap
 
             foreach (var item in filesPerFolder)
             {
-                var p = Path.GetDirectoryName(item);
+                var p = Path.GetDirectoryName(item) ?? string.Empty;
                 var name = Path.GetFileNameWithoutExtension(item);
-                var showName = p.Length > rootFolder.Length ? p.Replace(rootFolder + "\\", "") + "\\" + name : name;
+                var showName = name;
+                if (p.Length > rootFolder.Length && p.StartsWith(rootFolder, StringComparison.OrdinalIgnoreCase))
+                {
+                    var sub = p.Substring(rootFolder.Length).Trim(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+                    if (sub.Length > 0)
+                        showName = sub.Replace(Path.AltDirectorySeparatorChar, Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar + name;
+                }
 
+                string filePath = item;
                 EventHandler ev = (object sender, EventArgs e) =>
                 {
-                    var a = sender as ToolStripDropDownItem;
-                    CreateTemplateFromFile(a.Tag.ToString());
+                    CreateTemplateFromFile(filePath);
                     this.ExpireSolution(true);
                 };
 

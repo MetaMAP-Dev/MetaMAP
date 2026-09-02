@@ -1,49 +1,49 @@
-﻿using Eto.Drawing;
 using Eto.Forms;
+using GH_IO.Serialization;
 using Grasshopper.Kernel;
-using MetaMAP.Properties;
 using Rhino;
 using Rhino.UI;
 using System;
-using System.Collections.Generic;
-using System.Drawing;
-using System.IO;
+using System.Diagnostics;
+using System.Globalization;
 using System.Runtime.InteropServices;
-using System.Linq;
 
 namespace MetaMap
 {
+    /// <summary>
+    /// Interactive location picker. The map page is served by a loopback HTTP server
+    /// (<see cref="MapPickerServer"/>) and displayed either in an Eto window inside Rhino or,
+    /// when that is not possible on the current platform, in the system browser. Both paths
+    /// deliver the picked coordinates back through the same local server.
+    /// </summary>
     public class MetaFetchCMP : GH_Component
     {
-        private double _lat, _lng;
+        public enum DisplayMode
+        {
+            Auto = 0,
+            RhinoWindow = 1,
+            SystemBrowser = 2,
+        }
+
+        private double _lat = double.NaN, _lng = double.NaN;
         private bool _hasValue;
-        private WebView _currentWebView;
-        private Form _currentForm;
+        private DisplayMode _mode = DisplayMode.Auto;
+        private string _lastStatus = "";
+
+        private MapPickerServer _server;
+        private Form _form;
+        private WebView _webView;
 
         public MetaFetchCMP()
-          : base("MetaFETCH", "MetaFETCH", $"Interactive location picker for fetching coordinates. {Environment.NewLine} Use the 'Fetch Location' button to get coordinates.", "MetaMAP", "Fetch")
+          : base("MetaFETCH", "MetaFETCH",
+                $"Interactive location picker for fetching coordinates.{Environment.NewLine}Pan the map and press 'Fetch Location'.{Environment.NewLine}Right-click for display options (Rhino window / system browser / manual entry).",
+                "MetaMAP", "Fetch")
         { }
 
         public override Guid ComponentGuid => new Guid("7ECA432E-26BB-4E97-8A5D-A1C98D319888");
-        protected override System.Drawing.Bitmap Icon
-        {
-            get
-            {
-                if (!PlatformUtils.IsWindows())
-                    return null;
 
-                var iconBytes = Resources.MetaMAP_fetch;
-                if (iconBytes != null)
-                    // Convert byte array to a MemoryStream
-                    using (var ms = new MemoryStream(iconBytes))
-                    {
-                        // Return the Bitmap from the stream
-                        return new System.Drawing.Bitmap(ms);
-                    }
+        protected override System.Drawing.Bitmap Icon => MetaResources.GetIcon("MetaFetch.png");
 
-                return null; // Fallback in case iconBytes is null
-            }
-        }
         protected override void RegisterInputParams(GH_InputParamManager p)
         {
             p.AddBooleanParameter("Show Map", "S", "Opens the map window", GH_ParamAccess.item, false);
@@ -51,422 +51,422 @@ namespace MetaMap
 
         protected override void RegisterOutputParams(GH_OutputParamManager p)
         {
-            p.AddNumberParameter("Latitude", "Lat", "Clicked latitude", GH_ParamAccess.item);
-            p.AddNumberParameter("Longitude", "Lng", "Clicked longitude", GH_ParamAccess.item);
+            p.AddNumberParameter("Latitude", "Lat", "Picked latitude", GH_ParamAccess.item);
+            p.AddNumberParameter("Longitude", "Lng", "Picked longitude", GH_ParamAccess.item);
         }
+
+        // -------------------------------------------------------------------
+        // Persistence: the picked location survives saving / reopening the definition.
+        // -------------------------------------------------------------------
+
+        public override bool Write(GH_IWriter writer)
+        {
+            writer.SetBoolean("MetaFetch.HasValue", _hasValue);
+            writer.SetDouble("MetaFetch.Lat", _hasValue ? _lat : 0.0);
+            writer.SetDouble("MetaFetch.Lng", _hasValue ? _lng : 0.0);
+            writer.SetInt32("MetaFetch.Mode", (int)_mode);
+            return base.Write(writer);
+        }
+
+        public override bool Read(GH_IReader reader)
+        {
+            try
+            {
+                if (reader.ItemExists("MetaFetch.HasValue"))
+                {
+                    _hasValue = reader.GetBoolean("MetaFetch.HasValue");
+                    double lat = reader.GetDouble("MetaFetch.Lat");
+                    double lng = reader.GetDouble("MetaFetch.Lng");
+                    if (_hasValue && GeoProjection.IsValidCoordinate(lat, lng))
+                    {
+                        _lat = lat;
+                        _lng = lng;
+                    }
+                    else
+                    {
+                        _hasValue = false;
+                    }
+                }
+                if (reader.ItemExists("MetaFetch.Mode"))
+                    _mode = (DisplayMode)reader.GetInt32("MetaFetch.Mode");
+            }
+            catch
+            {
+                _hasValue = false;
+            }
+            return base.Read(reader);
+        }
+
+        // -------------------------------------------------------------------
+        // Context menu
+        // -------------------------------------------------------------------
+
+        protected override void AppendAdditionalComponentMenuItems(System.Windows.Forms.ToolStripDropDown menu)
+        {
+            base.AppendAdditionalComponentMenuItems(menu);
+            Menu_AppendSeparator(menu);
+            Menu_AppendItem(menu, "Open map now", (s, e) => RhinoApp.InvokeOnUiThread((Action)ShowMapWindow));
+            Menu_AppendItem(menu, "Enter coordinates manually...", (s, e) => RhinoApp.InvokeOnUiThread((Action)ShowManualDialog));
+            Menu_AppendSeparator(menu);
+            Menu_AppendItem(menu, "Map display: automatic", (s, e) => SetMode(DisplayMode.Auto), true, _mode == DisplayMode.Auto);
+            Menu_AppendItem(menu, "Map display: Rhino window", (s, e) => SetMode(DisplayMode.RhinoWindow), true, _mode == DisplayMode.RhinoWindow);
+            Menu_AppendItem(menu, "Map display: system browser", (s, e) => SetMode(DisplayMode.SystemBrowser), true, _mode == DisplayMode.SystemBrowser);
+            if (_hasValue)
+            {
+                Menu_AppendSeparator(menu);
+                Menu_AppendItem(menu, $"Current: {_lat.ToString("F6", CultureInfo.InvariantCulture)}, {_lng.ToString("F6", CultureInfo.InvariantCulture)}", null, false);
+                Menu_AppendItem(menu, "Clear picked location", (s, e) =>
+                {
+                    _hasValue = false;
+                    ExpireSolution(true);
+                });
+            }
+        }
+
+        private void SetMode(DisplayMode mode)
+        {
+            _mode = mode;
+            CloseWindow();
+        }
+
+        // -------------------------------------------------------------------
+        // Solve
+        // -------------------------------------------------------------------
 
         protected override void SolveInstance(IGH_DataAccess DA)
         {
             bool show = false;
-
             if (!DA.GetData(0, ref show)) return;
 
             if (show)
-            {
-                _hasValue = false; // Reset value when map is opened
                 RhinoApp.InvokeOnUiThread((Action)ShowMapWindow);
-            }
 
             if (_hasValue)
             {
                 DA.SetData(0, _lat);
                 DA.SetData(1, _lng);
-                RhinoApp.WriteLine($"OSM Picker: Returning lat={_lat}, lng={_lng}");
+                Message = $"{_lat.ToString("F5", CultureInfo.InvariantCulture)}, {_lng.ToString("F5", CultureInfo.InvariantCulture)}";
             }
             else
             {
-                // Output NaN to signal "no value" instead of null (which triggers defaults downstream)
+                // NaN signals "no value" downstream instead of null (which would trigger defaults).
                 DA.SetData(0, double.NaN);
                 DA.SetData(1, double.NaN);
-                RhinoApp.WriteLine("OSM Picker: No value selected yet (sending NaN)");
+                Message = "No location yet";
+                AddRuntimeMessage(GH_RuntimeMessageLevel.Remark, "Press the button to open the map, then 'Fetch Location'.");
             }
+
+            if (!string.IsNullOrEmpty(_lastStatus))
+                AddRuntimeMessage(GH_RuntimeMessageLevel.Remark, _lastStatus);
         }
+
+        public override void RemovedFromDocument(GH_Document document)
+        {
+            CloseWindow();
+            StopServer();
+            base.RemovedFromDocument(document);
+        }
+
+        // -------------------------------------------------------------------
+        // Receiving coordinates (may arrive from the server thread)
+        // -------------------------------------------------------------------
+
+        private void OnCoordinatesPicked(double lat, double lng, string source)
+        {
+            RhinoApp.InvokeOnUiThread((Action)(() =>
+            {
+                if (!GeoProjection.IsValidCoordinate(lat, lng))
+                {
+                    RhinoApp.WriteLine($"MetaFETCH: ignored invalid coordinates {lat}, {lng}");
+                    return;
+                }
+                _lat = lat;
+                _lng = lng;
+                _hasValue = true;
+                _lastStatus = $"Location picked via {source}";
+                RhinoApp.WriteLine($"MetaFETCH: lat={lat.ToString("F6", CultureInfo.InvariantCulture)}, lng={lng.ToString("F6", CultureInfo.InvariantCulture)} ({source})");
+
+                var doc = OnPingDocument();
+                if (doc != null)
+                    doc.ScheduleSolution(1, d => ExpireSolution(false));
+                else
+                    ExpireSolution(true);
+            }));
+        }
+
+        // -------------------------------------------------------------------
+        // Server
+        // -------------------------------------------------------------------
+
+        private MapPickerServer EnsureServer()
+        {
+            if (_server != null && _server.IsRunning) return _server;
+            StopServer();
+
+            double startLat = _hasValue ? _lat : 41.041122;
+            double startLng = _hasValue ? _lng : 28.989991;
+            string html = MapPickerServer.BuildHtml(startLat, startLng, _hasValue ? 15 : 12);
+            _server = MapPickerServer.Start(html, (lat, lng) => OnCoordinatesPicked(lat, lng, "map"));
+            return _server;
+        }
+
+        private void StopServer()
+        {
+            try { _server?.Dispose(); } catch { }
+            _server = null;
+        }
+
+        // -------------------------------------------------------------------
+        // Display
+        // -------------------------------------------------------------------
 
         private void ShowMapWindow()
         {
             try
             {
-                // Check if map window is already open
-                if (_currentForm != null && !_currentForm.IsDisposed)
+                // Already open? Bring it forward.
+                if (_form != null)
                 {
                     try
                     {
-                        // Try to bring existing window to front and activate it
-                        _currentForm.BringToFront();
-                        _currentForm.Focus();
-                        // _currentForm.Topmost is already true
-                        RhinoApp.WriteLine("Map window is already open - bringing to front");
+                        _form.BringToFront();
+                        _form.Focus();
+                        return;
                     }
-                    catch (Exception ex)
+                    catch
                     {
-                        RhinoApp.WriteLine($"Error bringing map window to front: {ex.Message}");
+                        _form = null;
                     }
-                    return;
                 }
 
-                // Check if WebView is supported on this platform
-                if (!PlatformUtils.IsWebViewSupported())
-                {
-                    RhinoApp.WriteLine($"WebView not supported on {PlatformUtils.GetCurrentPlatform()}. Using fallback method.");
-                    PlatformUtils.ShowCoordinateInputDialog((lat, lng) =>
-                    {
-                        _lat = lat;
-                        _lng = lng;
-                        _hasValue = true;
-                        RhinoApp.WriteLine($"Manual input: lat={_lat}, lng={_lng}");
-
-                        // Trigger Grasshopper recompute
-                        var doc = OnPingDocument();
-                        if (doc != null)
-                        {
-                            doc.ScheduleSolution(1, d => ExpireSolution(false));
-                        }
-                    });
-                    return;
-                }
-
-                // Load resources safely
-                string cssContent = "";
-                string jsContent = "";
+                string url;
                 try
                 {
-                    cssContent = Resources.ResourceManager.GetString("leaflet_css");
-                    jsContent = Resources.ResourceManager.GetString("leaflet_js");
+                    url = EnsureServer().Url;
                 }
                 catch (Exception ex)
                 {
-                    RhinoApp.WriteLine($"Error loading resources: {ex.Message}");
-                }
-
-                var html = @"
-<!DOCTYPE html>
-<html>
-<head>
-<meta charset='utf-8'/>
-<style>
-" + cssContent + @"
-html,body,#map{height:100%;margin:0;padding:0}
-#searchContainer {
-  position: absolute;
-  top: 10px;
-  left: 10px;
-  z-index: 1000;
-  background: white;
-  border-radius: 5px;
-  box-shadow: 0 2px 5px rgba(0,0,0,0.2);
-  padding: 5px;
-  display: flex;
-  gap: 5px;
-}
-#searchInput {
-  border: 1px solid #ccc;
-  border-radius: 3px;
-  padding: 8px 12px;
-  font-size: 14px;
-  width: 200px;
-  outline: none;
-}
-#searchInput:focus {
-  border-color: #007cba;
-}
-#searchButton {
-  background: #007cba;
-  color: white;
-  border: none;
-  padding: 8px 12px;
-  border-radius: 3px;
-  cursor: pointer;
-  font-size: 14px;
-}
-#searchButton:hover {
-  background: #005a87;
-}
-#fetchButton {
-  position: absolute;
-  top: 10px;
-  right: 10px;
-  z-index: 1000;
-  background: #007cba;
-  color: white;
-  border: none;
-  padding: 10px 15px;
-  border-radius: 5px;
-  cursor: pointer;
-  font-size: 14px;
-  box-shadow: 0 2px 5px rgba(0,0,0,0.2);
-}
-#fetchButton:hover {
-  background: #005a87;
-}
-#loadingOverlay {
-  position: absolute;
-  top: 0;
-  left: 0;
-  width: 100%;
-  height: 100%;
-  background: rgba(255, 255, 255, 0.8);
-  z-index: 2000;
-  display: flex;
-  justify-content: center;
-  align-items: center;
-  font-family: sans-serif;
-  font-size: 1.2em;
-  color: #333;
-}
-</style>
-<script>
-" + jsContent + @"
-</script>
-</head>
-<body>
-<div id='loadingOverlay'>Loading map...</div>
-<div id='map'></div>
-<div id='searchContainer'>
-  <input type='text' id='searchInput' placeholder='Search for a location...' />
-  <button id='searchButton'>Search</button>
-</div>
-<button id='fetchButton'>Fetch Location</button>
-<script>
-var map=L.map('map', {zoomControl: false}).setView([41.041122, 28.989991],12);
-console.time('mapLoad');
-var tileLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19});
-tileLayer.addTo(map);
-
-// Hide loading overlay when tiles start loading
-tileLayer.on('load', function() {
-  console.timeEnd('mapLoad');
-  document.getElementById('loadingOverlay').style.display = 'none';
-});
-// Also hide after a longer timeout just in case
-setTimeout(function() {
-  document.getElementById('loadingOverlay').style.display = 'none';
-}, 10000);
-
-// Store current map center
-var currentCenter = map.getCenter();
-
-// Update center when map moves
-map.on('moveend', function() {
-  currentCenter = map.getCenter();
-});
-
-// Search functionality
-function searchLocation(query) {
-  if (!query.trim()) return;
-  
-  // Use Nominatim (OpenStreetMap's geocoding service)
-  fetch('https://nominatim.openstreetmap.org/search?format=json&q=' + encodeURIComponent(query) + '&limit=1')
-    .then(response => response.json())
-    .then(data => {
-      if (data && data.length > 0) {
-        var result = data[0];
-        var lat = parseFloat(result.lat);
-        var lon = parseFloat(result.lon);
-        
-        // Center map on search result
-        map.setView([lat, lon], 15);
-        
-        // NO MARKER ADDED HERE as requested
-        
-        console.log('Found location:', result.display_name, 'at', lat, lon);
-      } else {
-        alert('Location not found. Please try a different search term.');
-      }
-    })
-    .catch(error => {
-      console.error('Search error:', error);
-      alert('Search failed. Please check your internet connection.');
-    });
-}
-
-// Search button click handler
-document.getElementById('searchButton').addEventListener('click', function() {
-  var query = document.getElementById('searchInput').value;
-  searchLocation(query);
-});
-
-// Search on Enter key
-document.getElementById('searchInput').addEventListener('keypress', function(e) {
-  if (e.key === 'Enter') {
-    var query = this.value;
-    searchLocation(query);
-  }
-});
-
-// Fetch button click handler - only way to fetch location
-document.getElementById('fetchButton').addEventListener('click', function() {
-  var center = map.getCenter();
-  document.title='callback://' + center.lat + ',' + center.lng;
-});
-</script>
-</body>
-</html>";
-
-                var form = new Form
-                {
-                    Title = "MetaFETCH - Location Picker",
-                    Size = new Eto.Drawing.Size(600, 400),
-                    // ensure form appears in taskbar and can be activated
-                    Topmost = true, // Always on top as requested
-                    ShowInTaskbar = true,
-                    Owner = Rhino.UI.RhinoEtoApp.MainWindow // Set owner to Rhino window
-                };
-                _currentForm = form; // Store reference to prevent multiple windows
-
-                WebView web = null;
-                EventHandler<Eto.Forms.WebViewTitleEventArgs> handler = null;
-                try
-                {
-                    web = new WebView();
-                    _currentWebView = web; // Store reference for fetch functionality
-
-                    // Load HTML with error handling
-                    web.LoadHtml(html, new Uri("about:blank"));
-                    RhinoApp.WriteLine("WebView initialized successfully");
-                }
-                catch (Exception webEx)
-                {
-                    RhinoApp.WriteLine($"WebView initialization failed: {webEx.Message}");
-                    try { form.Close(); } catch { }
-                    PlatformUtils.ShowCoordinateInputDialog((lat, lng) =>
-                    {
-                        _lat = lat;
-                        _lng = lng;
-                        _hasValue = true;
-                        RhinoApp.WriteLine($"Manual input: lat={_lat}, lng={_lng}");
-
-                        // Trigger Grasshopper recompute
-                        var doc = OnPingDocument();
-                        if (doc != null)
-                        {
-                            doc.ScheduleSolution(1, d => ExpireSolution(false));
-                        }
-                    });
+                    Report($"Local map server could not start ({ex.Message}); using manual entry.");
+                    ShowManualDialog();
                     return;
                 }
 
-                // Use DocumentTitleChanged event as a more reliable callback mechanism
-                handler = (s, e) =>
+                bool wantWindow = _mode != DisplayMode.SystemBrowser;
+                if (wantWindow)
                 {
-                    try
+                    string error = TryShowEtoWindow(url);
+                    if (error == null)
                     {
-                        var title = web.DocumentTitle;
-                        RhinoApp.WriteLine($"Document title changed: {title}");
-
-                        if (!string.IsNullOrEmpty(title) && title.StartsWith("callback://"))
-                        {
-                            var parts = title.Replace("callback://", "").Split(',');
-                            RhinoApp.WriteLine($"Parsing callback: {string.Join(", ", parts)}");
-
-                            if (parts.Length == 2 &&
-                                double.TryParse(parts[0], out double newLat) &&
-                                double.TryParse(parts[1], out double newLng))
-                            {
-                                _lat = newLat;
-                                _lng = newLng;
-                                _hasValue = true;
-
-                                RhinoApp.WriteLine($"Successfully parsed coordinates: {_lat}, {_lng}");
-
-                                // 🔁 trigger Grasshopper to recompute
-                                var doc = OnPingDocument();
-                                if (doc != null)
-                                {
-                                    // schedule recompute safely on GH main thread
-                                    doc.ScheduleSolution(1, d => ExpireSolution(false));
-                                }
-                            }
-                            else
-                            {
-                                RhinoApp.WriteLine($"Failed to parse coordinates from: {title}");
-                            }
-                        }
+                        _lastStatus = "Map shown in Rhino window";
+                        return;
                     }
-                    catch (Exception ex)
+                    Report($"Embedded map window failed: {error}");
+                    if (_mode == DisplayMode.RhinoWindow)
                     {
-                        RhinoApp.WriteLine($"Error in DocumentTitleChanged event: {ex.Message}");
+                        // The user explicitly asked for the window; still give them a way forward.
+                        Report("Falling back to the system browser.");
                     }
-                };
-
-                web.DocumentTitleChanged += handler;
-
-                form.Content = web;
-
-                // Clean up references when form is closed
-                form.Closed += (s, e) =>
-                {
-                    try
-                    {
-                        // Unsubscribe event handler to avoid duplicate handlers on re-open
-                        try
-                        {
-                            if (web != null && handler != null)
-                                web.DocumentTitleChanged -= handler;
-                        }
-                        catch (Exception ex) { RhinoApp.WriteLine($"Error unsubscribing handler: {ex.Message}"); }
-
-                        // Dispose webview to free native resources
-                        try
-                        {
-                            _currentWebView = null;
-                            web?.Dispose();
-                        }
-                        catch (Exception ex) { RhinoApp.WriteLine($"Error disposing WebView: {ex.Message}"); }
-
-                        // Ensure form reference cleared and disposed
-                        try
-                        {
-                            _currentForm = null;
-                            form?.Dispose();
-                        }
-                        catch (Exception ex) { RhinoApp.WriteLine($"Error disposing form: {ex.Message}"); }
-
-                        // Force a small GC to clean up native resources that can keep WebView alive
-                        try
-                        {
-                            GC.Collect();
-                            GC.WaitForPendingFinalizers();
-                        }
-                        catch { }
-
-                        RhinoApp.WriteLine("Map window closed and resources disposed");
-                    }
-                    catch (Exception ex)
-                    {
-                        RhinoApp.WriteLine($"Error during form cleanup: {ex.Message}");
-                    }
-                };
-
-                // Show and ensure activation
-                form.Show();
-                try
-                {
-                    form.Focus();
-                    form.BringToFront();
-                    // form.Topmost is already true
                 }
-                catch (Exception ex)
+
+                if (OpenInBrowser(url))
                 {
-                    RhinoApp.WriteLine($"Error activating form: {ex.Message}");
+                    _lastStatus = "Map opened in the system browser - press 'Fetch Location' there";
+                    RhinoApp.WriteLine($"MetaFETCH: map opened in your browser at {url} - pan to the location and press 'Fetch Location'.");
+                    return;
                 }
+
+                Report("Could not open a browser either; using manual entry.");
+                ShowManualDialog();
             }
             catch (Exception ex)
             {
-                RhinoApp.WriteLine($"Error creating map window: {ex.Message}");
-                PlatformUtils.ShowCoordinateInputDialog((lat, lng) =>
-                {
-                    _lat = lat;
-                    _lng = lng;
-                    _hasValue = true;
-                    RhinoApp.WriteLine($"Manual input: lat={_lat}, lng={_lng}");
+                Report($"Error creating map window: {ex.Message}");
+                ShowManualDialog();
+            }
+        }
 
-                    // Trigger Grasshopper recompute
-                    var doc = OnPingDocument();
-                    if (doc != null)
+        private void Report(string message)
+        {
+            _lastStatus = message;
+            RhinoApp.WriteLine("MetaFETCH: " + message);
+        }
+
+        /// <summary>Returns null on success, otherwise the reason the window could not be shown.</summary>
+        private string TryShowEtoWindow(string url)
+        {
+            Form form = null;
+            WebView web = null;
+            try
+            {
+                web = new WebView();
+
+                var fetchButton = new Button { Text = "Fetch Location (map centre)" };
+                var hint = new Label { Text = "Pan/zoom the map so the crosshair sits on your site, then press Fetch Location.", VerticalAlignment = VerticalAlignment.Center };
+                var browserButton = new Button { Text = "Open in browser" };
+
+                form = new Form
+                {
+                    Title = "MetaFETCH - Location Picker",
+                    ClientSize = new Eto.Drawing.Size(760, 520),
+                    Resizable = true,
+                    Minimizable = true,
+                    Maximizable = true,
+                };
+
+                // Keep the picker above Rhino. On macOS an owned window already floats above its
+                // owner; forcing Topmost as well makes the window invisible on some setups.
+                bool isMac = RuntimeInformation.IsOSPlatform(OSPlatform.OSX);
+                try { form.Owner = RhinoEtoApp.MainWindow; } catch { }
+                if (!isMac)
+                {
+                    try { form.Topmost = true; } catch { }
+                    try { form.ShowInTaskbar = true; } catch { }
+                }
+
+                var buttons = new TableLayout
+                {
+                    Padding = new Eto.Drawing.Padding(8, 6),
+                    Spacing = new Eto.Drawing.Size(8, 0),
+                    Rows = { new TableRow(hint, null, browserButton, fetchButton) }
+                };
+
+                form.Content = new TableLayout
+                {
+                    Rows =
                     {
-                        doc.ScheduleSolution(1, d => ExpireSolution(false));
+                        new TableRow(web) { ScaleHeight = true },
+                        new TableRow(buttons),
                     }
-                });
+                };
+
+                // Channel 1: the page calls the local server (see MapPickerServer).
+                // Channel 2: the page also sets document.title (works in embedded web views).
+                web.DocumentTitleChanged += (s, e) =>
+                {
+                    try
+                    {
+                        string title = e?.Title ?? web.DocumentTitle;
+                        if (TryParseCallback(title, out double lat, out double lng))
+                            OnCoordinatesPicked(lat, lng, "map window");
+                    }
+                    catch (Exception ex)
+                    {
+                        RhinoApp.WriteLine($"MetaFETCH: title callback error: {ex.Message}");
+                    }
+                };
+
+                // Channel 3: a native button that reads the map centre with script - independent of both.
+                fetchButton.Click += (s, e) =>
+                {
+                    try
+                    {
+                        string result = web.ExecuteScript("(function(){var c=map.getCenter();return c.lat+','+c.lng;})()");
+                        if (TryParsePair(result, out double lat, out double lng))
+                            OnCoordinatesPicked(lat, lng, "map window");
+                        else
+                            RhinoApp.WriteLine($"MetaFETCH: could not read the map centre ({result})");
+                    }
+                    catch (Exception ex)
+                    {
+                        RhinoApp.WriteLine($"MetaFETCH: script error: {ex.Message}");
+                    }
+                };
+
+                browserButton.Click += (s, e) => OpenInBrowser(url);
+
+                form.Closed += (s, e) =>
+                {
+                    _form = null;
+                    _webView = null;
+                    try { web.Dispose(); } catch { }
+                    try { form.Dispose(); } catch { }
+                };
+
+                _form = form;
+                _webView = web;
+
+                form.Show();
+                web.Url = new Uri(url);
+
+                try { form.BringToFront(); form.Focus(); } catch { }
+                return null;
+            }
+            catch (Exception ex)
+            {
+                _form = null;
+                _webView = null;
+                try { form?.Close(); } catch { }
+                try { web?.Dispose(); } catch { }
+                try { form?.Dispose(); } catch { }
+                return ex.GetBaseException().Message;
+            }
+        }
+
+        private void CloseWindow()
+        {
+            try
+            {
+                var f = _form;
+                _form = null;
+                _webView = null;
+                if (f != null) RhinoApp.InvokeOnUiThread((Action)(() => { try { f.Close(); } catch { } }));
+            }
+            catch
+            {
+            }
+        }
+
+        private void ShowManualDialog()
+        {
+            PlatformUtils.ShowCoordinateInputDialog(_hasValue ? _lat : (double?)null, _hasValue ? _lng : (double?)null,
+                (lat, lng) => OnCoordinatesPicked(lat, lng, "manual entry"));
+        }
+
+        // -------------------------------------------------------------------
+        // Helpers
+        // -------------------------------------------------------------------
+
+        private static bool TryParseCallback(string title, out double lat, out double lng)
+        {
+            lat = lng = double.NaN;
+            if (string.IsNullOrEmpty(title) || !title.StartsWith("callback://", StringComparison.OrdinalIgnoreCase)) return false;
+            return TryParsePair(title.Substring("callback://".Length), out lat, out lng);
+        }
+
+        private static bool TryParsePair(string text, out double lat, out double lng)
+        {
+            lat = lng = double.NaN;
+            if (string.IsNullOrWhiteSpace(text)) return false;
+            var parts = text.Trim().Trim('"').Split(',');
+            if (parts.Length != 2) return false;
+            return double.TryParse(parts[0].Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out lat) &&
+                   double.TryParse(parts[1].Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out lng) &&
+                   GeoProjection.IsValidCoordinate(lat, lng);
+        }
+
+        private static bool OpenInBrowser(string url)
+        {
+            try
+            {
+                Process.Start(new ProcessStartInfo(url) { UseShellExecute = true });
+                return true;
+            }
+            catch
+            {
+            }
+            try
+            {
+                if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
+                    Process.Start("open", url);
+                else if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
+                    Process.Start("xdg-open", url);
+                else
+                    Process.Start(new ProcessStartInfo("cmd", $"/c start \"\" \"{url}\"") { CreateNoWindow = true });
+                return true;
+            }
+            catch
+            {
+                return false;
             }
         }
     }

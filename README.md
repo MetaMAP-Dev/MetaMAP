@@ -13,9 +13,14 @@ The `MetaBuilding` component extracts building data from OpenStreetMap.
 **Features:**
 
 - Fetches building footprints based on latitude, longitude, and radius.
-- Extracts building heights from OSM data or uses default values.
-- Creates 2D building projection meshes.
+- Handles closed ways *and* multipolygon relations (courtyards, complex outlines) and the
+  OSM `building:part` convention.
+- Extracts building heights from OSM data (`height`, `building:levels`, `min_height`, ...) or uses
+  sensible defaults per building type. Parsing is culture independent.
+- Creates closed 3D solids (Breps) with a robust fallback chain.
 - Aligns buildings with a terrain mesh for accurate placement.
+- Talks to several Overpass mirrors with retries/back-off and caches answers, so overloaded
+  public servers no longer break the definition. Right-click the component to refresh or clear the cache.
 
 **Inputs:**
 
@@ -27,7 +32,7 @@ The `MetaBuilding` component extracts building data from OpenStreetMap.
 
 **Outputs:**
 
-- `Building Meshes` (Mesh): A list of 2D building footprint meshes.
+- `Building Breps` (Brep): A list of closed building solids.
 - `Building Heights` (Number): A list of building heights in meters.
 - `Status` (Text): The processing status and other information.
 
@@ -37,9 +42,10 @@ The `MetaTerrain` component fetches elevation data to create a terrain mesh.
 
 **Features:**
 
-- Fetches elevation data from the Open-Elevation API.
-- Falls back to OSM contour data or generates synthetic terrain if the primary source is unavailable.
-- Creates a Delaunay-triangulated terrain mesh.
+- Fetches elevation data from Open-Meteo, falling back to Open-Elevation and OSM contour lines.
+- Retries transient failures and caches downloaded elevations.
+- Creates a Delaunay-triangulated terrain surface (lowest point at Z=0).
+- Uses the same local projection as the building components so everything lines up.
 - Outputs elevation points and values for further analysis.
 
 **Inputs:**
@@ -64,9 +70,13 @@ The `MetaFetch` component provides an interactive map to select a location and g
 
 **Features:**
 
-- Opens an interactive map window.
-- Allows you to search for a location by name.
-- Fetches the latitude and longitude of the selected location.
+- Opens an interactive map (Leaflet / OpenStreetMap) in a Rhino window; when an embedded web
+  view is not available it opens the same page in your system browser instead.
+- Allows you to search for a location by name and pans to it.
+- Press **Fetch Location** to send the map centre (crosshair) back to Grasshopper.
+- Right-click the component to force the Rhino window or the system browser, or to type
+  coordinates by hand.
+- The picked location is saved with the definition.
 
 **Inputs:**
 
@@ -77,9 +87,27 @@ The `MetaFetch` component provides an interactive map to select a location and g
 - `Latitude` (Number): The latitude of the selected location.
 - `Longitude` (Number): The longitude of the selected location.
 
+### 4. MetaTEMPLATE and MetaUPDATE
+
+`MetaTEMPLATE` inserts a ready-made definition into the canvas (right-click the component). The
+shipped templates are:
+
+| Template | Buildings from | Location picker |
+| --- | --- | --- |
+| `MetaMAP_basic.ghx` | OpenStreetMap (`MetaBuilding`) | MetaFETCH map |
+| `MetaMAP_basic_for_MACOS.ghx` | OpenStreetMap (`MetaBuilding`) | two text panels (type lat/lon) |
+| `MetaMAP_advanced.ghx` | global LoD1 WFS (`MetaBuildingAdvanced`) | MetaFETCH map |
+| `MetaMAP_advanced_for_MACOS.ghx` | global LoD1 WFS (`MetaBuildingAdvanced`) | two text panels (type lat/lon) |
+
+The `_for_MACOS` variants are generated from the regular ones with `scripts/make_mac_template.py`
+and are handy on any machine where the map window cannot be shown.
+
+`MetaUPDATE` downloads the newest release archive from GitHub and installs it next to the plugin.
+
 ## How to Use
 
-1.  Install the `MetaMAP.gha` file in your Grasshopper `Components` folder.
+1.  Install with the Rhino Package Manager (`_PackageManager`, search for *MetaMAP*) or drop the
+    contents of `MetaMAP_Manual_New.zip` into your Grasshopper `Libraries` folder.
 2.  Open Grasshopper in Rhino.
 3.  You will find the MetaMAP components under the "MetaMAP" tab.
 4.  Use the `MetaFetch` component to pick a location.
@@ -89,8 +117,34 @@ The `MetaFetch` component provides an interactive map to select a location and g
 
 ## Dependencies
 
-- [Rhino](https://www.rhino3d.com/)
+- [Rhino 8](https://www.rhino3d.com/) (Windows or macOS)
 - [Grasshopper](https://www.grasshopper3d.com/)
+
+Only `MetaMAP.gha`, `Newtonsoft.Json.dll`, the `Templates` folder and the package icon are
+shipped. Rhino provides Eto, System.Drawing and Windows Forms on both platforms; do **not** copy
+other assemblies next to the plugin, that breaks loading on macOS ("Ribbon could not be populated").
+
+## Building from source
+
+```bash
+dotnet build MetaMAP.csproj -c Release -f net7.0
+```
+
+The build writes an installable folder to `bin/Release/net7.0/dist` and zips it as
+`bin/Release/net7.0/MetaMAP_Manual_New.zip`. `scripts/check_templates.py` validates the
+templates. GitHub Actions runs all of this on every push, builds the Yak package, and on a
+`vX.Y.Z` tag creates the GitHub release and publishes the package to the Rhino Package Manager
+(see `RELEASE.md`).
+
+## Troubleshooting
+
+- **Map window does not open (macOS)**: right-click MetaFETCH and choose *Map display: system
+  browser*, or *Enter coordinates manually...*. The Rhino command line shows what went wrong.
+- **"All OpenStreetMap Overpass mirrors failed"**: the public servers are overloaded. MetaMAP
+  already retried every mirror; wait a minute and try again, or reduce the radius. Previously
+  downloaded areas keep working from the cache (`<temp>/MetaMAP/cache`).
+- **Template menu does nothing**: make sure the `Templates` folder sits next to `MetaMAP.gha`, or
+  feed a folder path into the `Directory` input.
 
 ## Disclaimer
 
