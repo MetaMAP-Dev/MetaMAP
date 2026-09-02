@@ -28,6 +28,15 @@ namespace MetaMap
         /// <summary>How long a cached Overpass answer is reused. OSM building data changes slowly.</summary>
         public static TimeSpan DefaultCacheMaxAge { get; set; } = TimeSpan.FromHours(24);
 
+        /// <summary>Per-mirror request timeout. Overpass answers within a minute or reports a timeout itself.</summary>
+        public static TimeSpan RequestTimeout { get; set; } = TimeSpan.FromSeconds(60);
+
+        /// <summary>
+        /// Total time budget for one query across all mirrors and retries. Grasshopper solves
+        /// synchronously, so this bounds how long Rhino can appear frozen when the network is down.
+        /// </summary>
+        public static TimeSpan OverallTimeout { get; set; } = TimeSpan.FromSeconds(180);
+
         private static int _preferredEndpoint;
         private static readonly Regex RemarkRegex = new Regex("\"remark\"\\s*:\\s*\"([^\"]*)\"", RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
@@ -60,16 +69,26 @@ namespace MetaMap
             int maxAttempts = n * 2;
             string lastError = "unknown error";
             var rng = new Random();
+            var started = DateTime.UtcNow;
 
             for (int attempt = 0; attempt < maxAttempts; attempt++)
             {
                 cancel.ThrowIfCancellationRequested();
+                var remaining = OverallTimeout - (DateTime.UtcNow - started);
+                if (remaining < TimeSpan.FromSeconds(5))
+                {
+                    lastError = $"time budget of {OverallTimeout.TotalSeconds:F0}s exhausted ({lastError})";
+                    log.Append("budget exhausted; ");
+                    break;
+                }
+
                 int index = (start + attempt) % n;
                 string endpoint = Endpoints[index];
 
                 var form = new[] { new KeyValuePair<string, string>("data", query) };
                 // One low-level attempt per mirror; the outer loop provides the retries / rotation.
-                var result = MetaHttp.PostForm(endpoint, form, TimeSpan.FromSeconds(75), maxAttempts: 1, cancel: cancel);
+                var timeout = remaining < RequestTimeout ? remaining : RequestTimeout;
+                var result = MetaHttp.PostForm(endpoint, form, timeout, maxAttempts: 1, cancel: cancel);
 
                 string failure = Validate(result);
                 if (failure == null)

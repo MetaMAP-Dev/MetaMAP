@@ -28,8 +28,13 @@
     </PropertyGroup>
 
     <ItemGroup>
-        <!-- Rhino / Grasshopper API (compile-time only; Rhino supplies them at runtime). -->
-        <PackageReference Include="Grasshopper" Version="8.27.26019.16021" IncludeAssets="compile;build" />
+        <!-- Rhino / Grasshopper API (compile-time only; Rhino supplies them at runtime).
+             Deliberately the first Rhino 8 release: the Yak package inherits its minimum Rhino
+             version from this reference (distribution tag rh8_0-any = every Rhino 8 on Windows and Mac). -->
+        <PackageReference Include="Grasshopper" Version="8.0.23304.9001" IncludeAssets="compile;build" />
+        <!-- System.Drawing types used by the Grasshopper API (icons, canvas rendering). Compile-time
+             only: Rhino ships its own System.Drawing.Common on both platforms. -->
+        <PackageReference Include="System.Drawing.Common" Version="7.0.0" ExcludeAssets="runtime" />
         <!-- Shipped next to the .gha (see Distribution target). -->
         <PackageReference Include="Newtonsoft.Json" Version="13.0.3" GeneratePathProperty="true" />
     </ItemGroup>
@@ -79,6 +84,8 @@
         <RemoveDir Directories="$(DistDir)" />
         <MakeDir Directories="$(DistDir)" />
         <Copy SourceFiles="$(TargetDir)$(TargetName).gha;$(TargetDir)Newtonsoft.Json.dll;$(TargetDir)version.txt;$(MSBuildProjectDirectory)\manifest.yml" DestinationFolder="$(DistDir)" />
+        <!-- manifest.yml points at this icon; the package manager shows it in the plug-in list. -->
+        <Copy SourceFiles="$(MSBuildProjectDirectory)\Resources\MetaBuilding.png" DestinationFolder="$(DistDir)Resources" />
         <Copy SourceFiles="@(DistTemplates)" DestinationFiles="@(DistTemplates->'$(DistDir)Templates\%(RecursiveDir)%(Filename)%(Extension)')" />
         <Delete Files="$(ZipPath)" Condition="Exists('$(ZipPath)')" />
     </Target>

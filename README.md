@@ -120,9 +120,9 @@ and are handy on any machine where the map window cannot be shown.
 - [Rhino 8](https://www.rhino3d.com/) (Windows or macOS)
 - [Grasshopper](https://www.grasshopper3d.com/)
 
-Only `MetaMAP.gha`, `Newtonsoft.Json.dll` and the `Templates` folder are shipped. Rhino provides
-Eto, System.Drawing and Windows Forms on both platforms; do **not** copy other assemblies next to
-the plugin, that breaks loading on macOS ("Ribbon could not be populated").
+Only `MetaMAP.gha`, `Newtonsoft.Json.dll`, the `Templates` folder and the package icon are
+shipped. Rhino provides Eto, System.Drawing and Windows Forms on both platforms; do **not** copy
+other assemblies next to the plugin, that breaks loading on macOS ("Ribbon could not be populated").
 
 ## Building from source
 
@@ -132,7 +132,9 @@ dotnet build MetaMAP.csproj -c Release -f net7.0
 
 The build writes an installable folder to `bin/Release/net7.0/dist` and zips it as
 `bin/Release/net7.0/MetaMAP_Manual_New.zip`. `scripts/check_templates.py` validates the
-templates; both run in GitHub Actions on every push.
+templates. GitHub Actions runs all of this on every push, builds the Yak package, and on a
+`vX.Y.Z` tag creates the GitHub release and publishes the package to the Rhino Package Manager
+(see `RELEASE.md`).
 
 ## Troubleshooting
 
