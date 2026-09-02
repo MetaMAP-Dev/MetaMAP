@@ -555,14 +555,19 @@ namespace MetaMap
 
         /// <summary>
         /// Builds a closed solid for a footprint whose base sits at <paramref name="baseZ"/>.
+        /// When <paramref name="bottomZ"/> is given and the footprint starts at ground level
+        /// (no min_height), the solid is extended down to that elevation while the roof stays
+        /// at <c>baseZ + Height</c>; this sinks buildings into sloped terrain so no gap remains.
         /// Tries the fast Extrusion path first, then planar-Brep + face extrusion, then the outer ring only.
         /// Returns null when Rhino cannot make a valid solid from the outline.
         /// </summary>
-        public static Brep CreateSolid(BuildingFootprint footprint, double baseZ, double tolerance = 0.001)
+        public static Brep CreateSolid(BuildingFootprint footprint, double baseZ, double tolerance = 0.001, double? bottomZ = null)
         {
             if (footprint?.Outer == null) return null;
             double bottom = baseZ + footprint.MinHeight;
             double top = baseZ + footprint.Height;
+            if (bottomZ.HasValue && footprint.MinHeight <= 0 && bottomZ.Value < bottom)
+                bottom = bottomZ.Value;
             double height = top - bottom;
             if (height <= 0.01) return null;
 
@@ -679,16 +684,51 @@ namespace MetaMap
             private readonly Mesh _mesh;
             private readonly double _top;
 
+            // Terrain vertices bucketed on a uniform XY grid so MinUnder can find the
+            // vertices inside a footprint without scanning the whole mesh per building.
+            private readonly Point3d[] _vertices;
+            private readonly Dictionary<long, List<int>> _buckets;
+            private readonly double _cellSize;
+            private readonly Point3d _gridOrigin;
+
             public TerrainSampler(Mesh mesh)
             {
                 if (mesh != null && mesh.IsValid && mesh.Vertices.Count > 0 && mesh.Faces.Count > 0)
                 {
                     _mesh = mesh;
-                    _top = mesh.GetBoundingBox(false).Max.Z + 100.0;
+                    var bb = mesh.GetBoundingBox(false);
+                    _top = bb.Max.Z + 100.0;
+
+                    _vertices = mesh.Vertices.ToPoint3dArray();
+                    _gridOrigin = bb.Min;
+                    // Roughly one terrain vertex per bucket cell.
+                    double area = Math.Max(1e-6, (bb.Max.X - bb.Min.X) * (bb.Max.Y - bb.Min.Y));
+                    _cellSize = Math.Max(0.5, Math.Sqrt(area / Math.Max(1, _vertices.Length)));
+                    _buckets = new Dictionary<long, List<int>>();
+                    for (int i = 0; i < _vertices.Length; i++)
+                    {
+                        long key = BucketKey(_vertices[i].X, _vertices[i].Y);
+                        if (!_buckets.TryGetValue(key, out var list))
+                        {
+                            list = new List<int>();
+                            _buckets[key] = list;
+                        }
+                        list.Add(i);
+                    }
                 }
             }
 
             public bool IsAvailable => _mesh != null;
+
+            /// <summary>Approximate spacing of the terrain mesh vertices in model units.</summary>
+            public double CellSize => _mesh == null ? 0.0 : _cellSize;
+
+            private long BucketKey(double x, double y)
+            {
+                long ix = (long)Math.Floor((x - _gridOrigin.X) / _cellSize);
+                long iy = (long)Math.Floor((y - _gridOrigin.Y) / _cellSize);
+                return (ix << 32) ^ (iy & 0xffffffffL);
+            }
 
             public double Sample(double x, double y)
             {
@@ -726,6 +766,62 @@ namespace MetaMap
                 sum += Sample(c.X, c.Y);
                 n++;
                 return n == 0 ? 0.0 : sum / n;
+            }
+
+            /// <summary>
+            /// Lowest terrain elevation under a footprint. On a piecewise-linear terrain the minimum
+            /// lies on a footprint vertex, on a footprint edge where it crosses a terrain edge, or on a
+            /// terrain vertex inside the footprint, so we sample the ring vertices, points along the
+            /// edges (finer than the terrain vertex spacing) and every terrain vertex inside the ring.
+            /// </summary>
+            public double MinUnder(Polyline ring)
+            {
+                if (_mesh == null || ring == null || ring.Count < 2) return 0.0;
+
+                double min = double.MaxValue;
+                double step = Math.Max(0.25, _cellSize * 0.5);
+
+                for (int i = 0; i < ring.Count - 1; i++)
+                {
+                    var a = ring[i];
+                    var b = ring[i + 1];
+                    double len = Math.Sqrt((b.X - a.X) * (b.X - a.X) + (b.Y - a.Y) * (b.Y - a.Y));
+                    int divisions = Math.Max(1, (int)Math.Ceiling(len / step));
+                    for (int k = 0; k < divisions; k++)
+                    {
+                        double t = (double)k / divisions;
+                        double z = Sample(a.X + (b.X - a.X) * t, a.Y + (b.Y - a.Y) * t);
+                        if (z < min) min = z;
+                    }
+                }
+
+                var bb = ring.BoundingBox;
+                Curve closed = null;
+                try { closed = ring.ToPolylineCurve(); } catch { }
+                if (closed != null && closed.IsClosed)
+                {
+                    long ix0 = (long)Math.Floor((bb.Min.X - _gridOrigin.X) / _cellSize);
+                    long ix1 = (long)Math.Floor((bb.Max.X - _gridOrigin.X) / _cellSize);
+                    long iy0 = (long)Math.Floor((bb.Min.Y - _gridOrigin.Y) / _cellSize);
+                    long iy1 = (long)Math.Floor((bb.Max.Y - _gridOrigin.Y) / _cellSize);
+                    for (long ix = ix0; ix <= ix1; ix++)
+                    {
+                        for (long iy = iy0; iy <= iy1; iy++)
+                        {
+                            long key = (ix << 32) ^ (iy & 0xffffffffL);
+                            if (!_buckets.TryGetValue(key, out var indices)) continue;
+                            foreach (int idx in indices)
+                            {
+                                var v = _vertices[idx];
+                                if (v.X < bb.Min.X || v.X > bb.Max.X || v.Y < bb.Min.Y || v.Y > bb.Max.Y) continue;
+                                if (!ContainsPoint(closed, new Point3d(v.X, v.Y, 0))) continue;
+                                if (v.Z < min) min = v.Z;
+                            }
+                        }
+                    }
+                }
+
+                return min == double.MaxValue ? AverageUnder(ring) : min;
             }
         }
 
