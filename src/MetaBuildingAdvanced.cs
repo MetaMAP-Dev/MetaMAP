@@ -37,6 +37,10 @@ namespace MetaMap
             pManager.AddGeometryParameter("Terrain", "T", "Optional terrain mesh or brep to align buildings with terrain elevation", GH_ParamAccess.item);
             pManager[3].Optional = true;
             pManager.AddIntegerParameter("Tiles", "Tiles", "Number of tiles per axis (e.g. 3 => 3x3 grid). Set to 0 for adaptive calculation.", GH_ParamAccess.item, 0);
+            pManager.AddBooleanParameter("Sink to Terrain", "Sink", "Extend every building down below the lowest terrain point under its footprint so the solid intersects the terrain everywhere (no gaps on slopes, e.g. for CFD). Requires a Terrain input. Default: false", GH_ParamAccess.item, false);
+            pManager.AddNumberParameter("Sink Margin", "SM", "Extra depth in meters the building base is pushed below the lowest terrain point under its footprint when Sink to Terrain is on. Default: 1", GH_ParamAccess.item, 1.0);
+            pManager[5].Optional = true;
+            pManager[6].Optional = true;
         }
 
         protected override void RegisterOutputParams(GH_OutputParamManager pManager)
@@ -52,12 +56,17 @@ namespace MetaMap
             double radius = 500;
             IGH_GeometricGoo terrainGoo = null;
             int tileCount = 0;
+            bool sinkToTerrain = false;
+            double sinkMargin = 1.0;
 
             if (!DA.GetData(0, ref lat)) return;
             if (!DA.GetData(1, ref lon)) return;
             DA.GetData(2, ref radius);
             DA.GetData(3, ref terrainGoo);
             DA.GetData(4, ref tileCount);
+            DA.GetData(5, ref sinkToTerrain);
+            DA.GetData(6, ref sinkMargin);
+            if (double.IsNaN(sinkMargin) || sinkMargin < 0) sinkMargin = 0;
 
             if (double.IsNaN(lat) || double.IsNaN(lon))
             {
@@ -82,7 +91,12 @@ namespace MetaMap
                 else if (terrainMesh != null)
                     Log($"Using terrain mesh with {terrainMesh.Vertices.Count} vertices");
 
-                var buildings = ProcessBuildings(lat, lon, radius, terrainMesh, tileCount);
+                if (sinkToTerrain && terrainMesh == null)
+                    Log("Sink to Terrain is on but no terrain is connected; buildings keep a flat base.");
+                else if (sinkToTerrain)
+                    Log($"Sinking building bases {sinkMargin:0.##}m below the lowest terrain point under each footprint");
+
+                var buildings = ProcessBuildings(lat, lon, radius, terrainMesh, tileCount, sinkToTerrain ? sinkMargin : (double?)null);
                 DA.SetDataList(0, buildings);
                 DA.SetData(1, string.Join("\n", _debugMessages));
             }
@@ -100,7 +114,8 @@ namespace MetaMap
             _debugMessages.Add($"[{DateTime.Now:HH:mm:ss}] {msg}");
         }
 
-        private List<Brep> ProcessBuildings(double lat, double lon, double radius, Mesh terrainMesh, int tileCount)
+        /// <param name="sinkMargin">When set, bases are extended to this many meters below the lowest terrain point under the footprint.</param>
+        private List<Brep> ProcessBuildings(double lat, double lon, double radius, Mesh terrainMesh, int tileCount, double? sinkMargin)
         {
             var buildings = new List<Brep>();
             var projection = new GeoProjection(lat, lon);
@@ -213,7 +228,7 @@ namespace MetaMap
                 }
 
                 int before = buildings.Count;
-                buildings.AddRange(CreateBuildingBreps(geom, height, projection, sampler));
+                buildings.AddRange(CreateBuildingBreps(geom, height, projection, sampler, sinkMargin));
                 if (buildings.Count == before) failed++;
             }
 
@@ -251,7 +266,7 @@ namespace MetaMap
             return response.Body;
         }
 
-        private List<Brep> CreateBuildingBreps(JObject geometry, double height, GeoProjection projection, OsmBuildingGeometry.TerrainSampler sampler)
+        private List<Brep> CreateBuildingBreps(JObject geometry, double height, GeoProjection projection, OsmBuildingGeometry.TerrainSampler sampler, double? sinkMargin)
         {
             var breps = new List<Brep>();
             if (geometry == null) return breps;
@@ -284,7 +299,8 @@ namespace MetaMap
                     }
 
                     double baseZ = sampler.IsAvailable ? sampler.AverageUnder(outer) : 0.0;
-                    var solid = OsmBuildingGeometry.CreateSolid(footprint, baseZ);
+                    double? bottomZ = sinkMargin.HasValue && sampler.IsAvailable ? sampler.MinUnder(outer) - sinkMargin.Value : (double?)null;
+                    var solid = OsmBuildingGeometry.CreateSolid(footprint, baseZ, bottomZ: bottomZ);
                     if (solid != null) breps.Add(solid);
                 }
                 catch (Exception ex)

@@ -28,6 +28,8 @@ The `MetaBuilding` component extracts building data from OpenStreetMap.
 - `Longitude` (Number): The longitude for the center of the query.
 - `Radius` (Number): The search radius in meters.
 - `Terrain Mesh` (Mesh): An optional terrain mesh to align the buildings with.
+- `Sink to Terrain` (Boolean): When on, every ground-level building is extended down below the lowest terrain point under its footprint so the solid intersects the terrain everywhere. Removes the gaps that appear on slopes when a building sits at its average terrain height, which matters for CFD meshes. The roof stays where it is; only the base drops. Requires a terrain input. Default: off.
+- `Sink Margin` (Number): Extra depth in meters below the lowest terrain point when `Sink to Terrain` is on. Default: 1.
 - `Run` (Boolean): A boolean toggle to execute the data fetching and processing.
 
 **Outputs:**
@@ -133,6 +135,11 @@ dotnet build MetaMAP.csproj -c Release -f net7.0
 ```
 
 The build writes the package contents to `bin/Release/net7.0/dist`.
+When a Grasshopper `Libraries` folder exists on the machine (macOS:
+`~/Library/Application Support/McNeel/Rhinoceros/8.0/Plug-ins/Grasshopper (b45a29b1-...)/Libraries`,
+Windows: `%APPDATA%\Grasshopper\Libraries`), the build also writes a `MetaMAP.ghlink` there
+pointing at that `dist` folder, so restarting Rhino loads the fresh build. The file is overwritten
+on every build and points at whichever configuration (Debug or Release) was built last.
 `scripts/check_templates.py` validates the templates, and
 `dotnet run --project tests/MetaMAP.UpdateChecks -c Release` checks update notifications.
 GitHub Actions runs these checks on every push, builds the Yak package, and on a
