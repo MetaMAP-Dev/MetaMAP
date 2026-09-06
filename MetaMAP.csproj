@@ -13,9 +13,6 @@
         <Keyword3>analysis</Keyword3>
         <NeutralLanguage>en-US</NeutralLanguage>
         <PackageIcon>Resources\MetaBuilding.png</PackageIcon>
-        <Version>0.0.60</Version>
-        <AssemblyVersion>0.0.60</AssemblyVersion>
-        <FileVersion>0.0.60</FileVersion>
         <LangVersion>12</LangVersion>
         <RootNamespace>MetaMAP</RootNamespace>
         <GenerateAssemblyInfo>true</GenerateAssemblyInfo>
@@ -39,6 +36,11 @@
         <PackageReference Include="Newtonsoft.Json" Version="13.0.3" GeneratePathProperty="true" />
     </ItemGroup>
 
+    <ItemGroup>
+        <!-- The Rhino-free half. Shipped next to the .gha by the Distribution target. -->
+        <ProjectReference Include="MetaMAP.Core\MetaMAP.Core.csproj" />
+    </ItemGroup>
+
     <!-- GH_Component's menu API (AppendAdditionalComponentMenuItems) is typed against
          System.Windows.Forms regardless of platform. Reference the compile-time-only reference
          assemblies; at runtime Rhino/Grasshopper itself supplies the real implementation on both
@@ -50,7 +52,10 @@
 
     <!-- Icons, Leaflet script and stylesheet are plain manifest resources (see src/MetaResources.cs). -->
     <ItemGroup>
+        <!-- Both live under this project's directory, so the SDK's **/*.cs glob would compile
+             them into the .gha as well and every Core type would exist twice. -->
         <Compile Remove="tests\**\*.cs" />
+        <Compile Remove="MetaMAP.Core\**\*.cs" />
         <EmbeddedResource Include="Resources\*.png;Resources\leaflet.css;Resources\leaflet.js" LogicalName="MetaMAP.Resources.%(Filename)%(Extension)" />
         <None Include="Templates\**\*.*">
             <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
@@ -82,7 +87,9 @@
         </ItemGroup>
         <RemoveDir Directories="$(DistDir)" />
         <MakeDir Directories="$(DistDir)" />
-        <Copy SourceFiles="$(TargetDir)$(TargetName).gha;$(TargetDir)Newtonsoft.Json.dll;$(TargetDir)version.txt;$(MSBuildProjectDirectory)\manifest.yml" DestinationFolder="$(DistDir)" />
+        <!-- LICENSE.md ships with the binary: GPLv3 section 4 requires the license to accompany
+             every conveyed copy, and the Yak package is how users receive one. -->
+        <Copy SourceFiles="$(TargetDir)$(TargetName).gha;$(TargetDir)MetaMAP.Core.dll;$(TargetDir)Newtonsoft.Json.dll;$(TargetDir)version.txt;$(MSBuildProjectDirectory)\manifest.yml;$(MSBuildProjectDirectory)\LICENSE.md" DestinationFolder="$(DistDir)" />
         <!-- manifest.yml points at this icon; the package manager shows it in the plug-in list. -->
         <Copy SourceFiles="$(MSBuildProjectDirectory)\Resources\MetaBuilding.png" DestinationFolder="$(DistDir)Resources" />
         <Copy SourceFiles="@(DistTemplates)" DestinationFiles="@(DistTemplates->'$(DistDir)Templates\%(RecursiveDir)%(Filename)%(Extension)')" />

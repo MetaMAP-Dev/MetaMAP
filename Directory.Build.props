@@ -1,0 +1,30 @@
+<Project>
+
+    <!--
+      Shared by MetaMAP.gha, MetaMAP.Core and the test projects. The version lives here rather
+      than in MetaMAP.csproj because MetaHttp's User-Agent reads it from its own assembly, and
+      MetaHttp now ships in MetaMAP.Core - two copies of the number would drift on release.
+    -->
+    <PropertyGroup>
+        <Version>0.0.60</Version>
+        <AssemblyVersion>0.0.60</AssemblyVersion>
+        <FileVersion>0.0.60</FileVersion>
+    </PropertyGroup>
+
+    <!--
+      The yak manifest has no license field, so the GPLv3 that LICENSE.md declares is surfaced
+      through assembly metadata instead: Copyright shows in the Windows file properties and
+      Rhino's plug-in manager, AssemblyMetadata carries the SPDX id, and PackageLicenseExpression
+      covers any NuGet packing.
+    -->
+    <PropertyGroup>
+        <Copyright>Copyright (c) MetaMAP Authors. Licensed under GPL-3.0-or-later.</Copyright>
+        <PackageLicenseExpression>GPL-3.0-or-later</PackageLicenseExpression>
+    </PropertyGroup>
+
+    <ItemGroup>
+        <AssemblyMetadata Include="License" Value="GPL-3.0-or-later" />
+        <AssemblyMetadata Include="LicenseUrl" Value="https://github.com/MetaMAP-Dev/MetaMAP/blob/main/LICENSE.md" />
+    </ItemGroup>
+
+</Project>

@@ -6,12 +6,12 @@ using System.Threading.Tasks;
 
 namespace MetaMap
 {
-    internal static class YakUpdateChecker
+    public static class YakUpdateChecker
     {
-        internal const string PackageUrl = "https://yak.rhino3d.com/packages/metamap";
-        internal const string InstallInstructions = "Run _PackageManager in Rhino, search for MetaMAP, and install the latest available version. Restart Rhino after installation.";
+        public const string PackageUrl = "https://yak.rhino3d.com/packages/metamap";
+        public const string InstallInstructions = "Run _PackageManager in Rhino, search for MetaMAP, and install the latest available version. Restart Rhino after installation.";
 
-        internal static async Task<string> CheckAsync(HttpClient client, string currentVersion, CancellationToken cancel)
+        public static async Task<string> CheckAsync(HttpClient client, string currentVersion, CancellationToken cancel)
         {
             // Read public metadata only; Package Manager handles installation and compatibility.
             using var response = await client.GetAsync(PackageUrl, cancel).ConfigureAwait(false);

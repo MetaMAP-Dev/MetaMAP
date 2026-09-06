@@ -175,10 +175,11 @@ namespace MetaMap
         /// Builds the self-contained picker page. Leaflet is inlined so the page needs the
         /// network only for map tiles and the Nominatim search.
         /// </summary>
-        public static string BuildHtml(double startLat, double startLng, int zoom)
+        /// <param name="css">Leaflet stylesheet. Passed in rather than read here: the Leaflet
+        /// assets are manifest resources of the .gha, and this assembly must not reach into it.</param>
+        /// <param name="js">Leaflet script, same reason.</param>
+        public static string BuildHtml(double startLat, double startLng, int zoom, string css, string js)
         {
-            string css = MetaResources.GetString("leaflet.css");
-            string js = MetaResources.GetString("leaflet.js");
             string lat = startLat.ToString("F6", CultureInfo.InvariantCulture);
             string lng = startLng.ToString("F6", CultureInfo.InvariantCulture);
 

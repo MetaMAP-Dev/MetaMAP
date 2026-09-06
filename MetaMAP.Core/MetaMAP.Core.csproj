@@ -1,0 +1,28 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+    <!--
+      Rhino-free core of MetaMAP: HTTP with retry/back-off and caching, the Overpass mirror
+      rotation, the loopback map-picker server, the geographic projection, and the OSM-to-footprint
+      pipeline. Nothing here references RhinoCommon or Grasshopper, so it compiles and runs on a
+      machine with no Rhino installed and can be unit-tested without launching one.
+
+      The rule this project exists to enforce: if a Rhino or Grasshopper reference is ever added
+      here, the build breaks, which is the point. Geometry that genuinely needs the kernel
+      (solid extrusion, Brep validity, meshing a trimmed surface) belongs in MetaMAP.csproj.
+
+      net7.0 matches the .gha: MetaMAP targets net7.0 because that is what Rhino 8 loads, and a
+      net8.0 core could not be referenced by it.
+    -->
+    <PropertyGroup>
+        <TargetFramework>net7.0</TargetFramework>
+        <LangVersion>12</LangVersion>
+        <RootNamespace>MetaMap</RootNamespace>
+        <Title>MetaMAP.Core</Title>
+        <Description>Rhino-free core of MetaMAP: networking, geocoding and OSM geometry assembly.</Description>
+    </PropertyGroup>
+
+    <ItemGroup>
+        <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
+    </ItemGroup>
+
+</Project>

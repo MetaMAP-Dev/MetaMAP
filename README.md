@@ -159,6 +159,12 @@ If moving from a manual installation, remove the old MetaMAP files from Grasshop
 - **Template menu does nothing**: make sure the `Templates` folder sits next to `MetaMAP.gha`, or
   feed a folder path into the `Directory` input.
 
+## License
+
+MetaMAP is free software licensed under the [GNU General Public License v3.0 or later](LICENSE.md).
+It comes with no warranty. Redistributions and derived works must also be GPL-3.0-or-later and
+must make their source available.
+
 ## Disclaimer
 
 This plugin relies on external APIs such as OpenStreetMap and Open-Elevation. The availability and reliability of these services may vary. Please use this tool responsibly and respect the terms of use of the respective data providers.

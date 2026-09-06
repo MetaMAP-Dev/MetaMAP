@@ -41,10 +41,12 @@ public class MetaTerrainCMP : GH_Component
 
     protected override void RegisterOutputParams(GH_OutputParamManager pManager)
     {
-        pManager.AddBrepParameter("Terrain Brep", "TB", "Generated terrain brep with elevation data", GH_ParamAccess.item);
+        pManager.AddBrepParameter("Terrain Brep", "TB", "Generated terrain brep with elevation data. Prefer the Terrain Mesh output: the Brep carries one trimmed face per triangle and is only built when this output is connected.", GH_ParamAccess.item);
         pManager.AddPointParameter("Elevation Points", "EP", "Grid points with elevation data", GH_ParamAccess.list);
         pManager.AddNumberParameter("Elevation Values", "EV", "Elevation values in meters", GH_ParamAccess.list);
         pManager.AddTextParameter("Status", "S", "Processing status and information", GH_ParamAccess.item);
+        // Appended last so existing definitions keep the output indices they were saved with.
+        pManager.AddMeshParameter("Terrain Mesh", "TM", "Generated terrain mesh with elevation data. This is the terrain MetaBUILDING samples, and what mesh-based tools (Ladybug, Radiance, OpenFOAM) want", GH_ParamAccess.item);
     }
 
     protected override void SolveInstance(IGH_DataAccess DA)
@@ -92,14 +94,20 @@ public class MetaTerrainCMP : GH_Component
                 s.Point = new Point3d(s.Point.X, s.Point.Y, s.Elevation);
             }
 
-            var mesh = CreateTerrainMesh(samples);
+            var mesh = CreateTerrainMesh(samples, gridResolution);
             if (mesh == null) throw new Exception("Terrain mesh could not be triangulated");
 
-            Brep terrainBrep = Brep.CreateFromMesh(mesh, true);
-            if (terrainBrep == null || !terrainBrep.IsValid)
+            // Brep.CreateFromMesh turns every triangle into a trimmed face - nearly 5000 of them at
+            // resolution 50 - so only pay for it when something is wired to the Brep output.
+            Brep terrainBrep = null;
+            if (Params.Output[0].Recipients.Count > 0)
             {
-                AddRuntimeMessage(GH_RuntimeMessageLevel.Warning, "Terrain mesh could not be converted to a Brep; output is empty.");
-                terrainBrep = null;
+                terrainBrep = Brep.CreateFromMesh(mesh, true);
+                if (terrainBrep == null || !terrainBrep.IsValid)
+                {
+                    AddRuntimeMessage(GH_RuntimeMessageLevel.Warning, "Terrain mesh could not be converted to a Brep; use the Terrain Mesh output instead.");
+                    terrainBrep = null;
+                }
             }
 
             DA.SetData(0, terrainBrep);
@@ -107,6 +115,7 @@ public class MetaTerrainCMP : GH_Component
             DA.SetDataList(2, showPoints ? samples.Select(s => s.Elevation).ToList() : null);
             DA.SetData(3, $"Successfully processed terrain data. Location: {lat:F6}, {lon:F6}, Radius: {radius}m, Grid: {gridResolution}x{gridResolution}, " +
                           $"Base elevation: {minElevation:F1}m a.s.l. Points: {(showPoints ? "Visible" : "Hidden")}. {string.Join(". ", log)}");
+            DA.SetData(4, mesh);
         }
         catch (Exception ex)
         {
@@ -121,6 +130,7 @@ public class MetaTerrainCMP : GH_Component
         DA.SetDataList(1, showPoints ? new List<Point3d>() : null);
         DA.SetDataList(2, showPoints ? new List<double>() : null);
         DA.SetData(3, status);
+        DA.SetData(4, null);
     }
 
     // -------------------------------------------------------------------
@@ -150,7 +160,7 @@ public class MetaTerrainCMP : GH_Component
             {
                 double lat = south + (north - south) * i / (resolution - 1);
                 double lon = west + (east - west) * j / (resolution - 1);
-                points.Add(new GridPoint { Lat = lat, Lon = lon, Point = projection.ToLocal(lat, lon) });
+                points.Add(new GridPoint { Lat = lat, Lon = lon, Point = projection.ToLocal(lat, lon).ToPoint3d() });
             }
         }
         return points;
@@ -316,7 +326,7 @@ public class MetaTerrainCMP : GH_Component
                     contours.Add(new ContourLine
                     {
                         Elevation = ele.Value,
-                        Points = e.Geometry.Select(c => projection.ToLocal(c.Lat, c.Lon, ele.Value)).ToList()
+                        Points = e.Geometry.Select(c => projection.ToLocal(c.Lat, c.Lon, ele.Value).ToPoint3d()).ToList()
                     });
                 }
             }
@@ -359,28 +369,35 @@ public class MetaTerrainCMP : GH_Component
     // Mesh
     // -------------------------------------------------------------------
 
-    private static Mesh CreateTerrainMesh(List<ElevationSample> samples)
+    /// <summary>
+    /// Triangulates the elevation samples by index rather than by Delaunay: GenerateGrid emits a
+    /// regular resolution x resolution lattice row-major (south to north, west to east), and
+    /// FetchElevations only accepts a source that answered every grid point, so sample
+    /// i * resolution + j is the lattice node at row i, column j. Winding is counter-clockwise
+    /// seen from +Z, which points the normals up.
+    /// </summary>
+    private static Mesh CreateTerrainMesh(List<ElevationSample> samples, int resolution)
     {
-        if (samples.Count < 3) return null;
-        try
-        {
-            var nodes = new Grasshopper.Kernel.Geometry.Node2List();
-            foreach (var s in samples)
-                nodes.Append(new Grasshopper.Kernel.Geometry.Node2(s.Point.X, s.Point.Y));
+        if (samples.Count != resolution * resolution) return null;
 
-            var faces = Grasshopper.Kernel.Geometry.Delaunay.Solver.Solve_Faces(nodes, 0);
-            var mesh = new Mesh();
-            foreach (var s in samples) mesh.Vertices.Add(s.Point);
-            foreach (var f in faces) mesh.Faces.AddFace(f.A, f.B, f.C);
+        var mesh = new Mesh();
+        foreach (var s in samples) mesh.Vertices.Add(s.Point);
 
-            if (mesh.Faces.Count == 0) return null;
-            mesh.Normals.ComputeNormals();
-            mesh.Compact();
-            return mesh;
-        }
-        catch
+        for (int i = 0; i < resolution - 1; i++)
         {
-            return null;
+            for (int j = 0; j < resolution - 1; j++)
+            {
+                int a = i * resolution + j;
+                int b = a + 1;
+                int c = (i + 1) * resolution + j + 1;
+                int d = c - 1;
+                mesh.Faces.AddFace(a, b, c);
+                mesh.Faces.AddFace(a, c, d);
+            }
         }
+
+        if (mesh.Faces.Count == 0) return null;
+        mesh.Normals.ComputeNormals();
+        return mesh;
     }
 }

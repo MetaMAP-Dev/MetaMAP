@@ -110,7 +110,7 @@ public class MetaBuildingCMP : GH_Component
                 throw new Exception($"Radius must be between 1 and {MaxRadius:F0} meters");
 
             var projection = new GeoProjection(lat, lon);
-            var terrainMesh = OsmBuildingGeometry.ToTerrainMesh(terrainInput);
+            var terrainMesh = BuildingSolids.ToTerrainMesh(terrainInput);
             if (terrainInput != null && terrainMesh == null)
                 AddRuntimeMessage(GH_RuntimeMessageLevel.Warning, "Terrain input could not be converted to a mesh; buildings are placed at Z=0.");
             if (sinkToTerrain && terrainMesh == null)
@@ -134,14 +134,14 @@ public class MetaBuildingCMP : GH_Component
             var footprints = OsmBuildingGeometry.ExtractFootprints(osm, projection, log);
             footprints = OsmBuildingGeometry.ResolveParts(footprints, log);
 
-            var sampler = new OsmBuildingGeometry.TerrainSampler(terrainMesh);
+            var sampler = new BuildingSolids.TerrainSampler(terrainMesh);
             bool sink = sinkToTerrain && sampler.IsAvailable;
             int failed = 0;
             foreach (var f in footprints)
             {
                 double baseZ = sampler.IsAvailable ? sampler.AverageUnder(f.Outer) : 0.0;
                 double? bottomZ = sink && f.MinHeight <= 0 ? sampler.MinUnder(f.Outer) - sinkMargin : (double?)null;
-                var solid = OsmBuildingGeometry.CreateSolid(f, baseZ, bottomZ: bottomZ);
+                var solid = BuildingSolids.CreateSolid(f, baseZ, bottomZ: bottomZ);
                 if (solid == null)
                 {
                     failed++;
