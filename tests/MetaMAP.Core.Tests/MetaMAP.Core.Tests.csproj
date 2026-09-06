@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <IsPackable>false</IsPackable>
+    <LangVersion>12</LangVersion>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.*" />
+    <PackageReference Include="NUnit" Version="4.4.0" />
+    <PackageReference Include="NUnit3TestAdapter" Version="5.1.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- The Rhino-free core. This project is the reason it exists: none of these tests can run
+         inside Rhino, and before the split none of this code could be reached without it. -->
+    <ProjectReference Include="..\..\MetaMAP.Core\MetaMAP.Core.csproj" />
+  </ItemGroup>
+
+</Project>

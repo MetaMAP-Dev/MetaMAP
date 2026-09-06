@@ -63,6 +63,9 @@ jobs:
       - name: Validate Grasshopper templates
         run: python3 scripts/check_templates.py Templates
 
+      - name: Unit tests (MetaMAP.Core, no Rhino required)
+        run: dotnet test tests/MetaMAP.Core.Tests -c Release
+
       - name: Check Yak update notifications
         run: dotnet run --project tests/MetaMAP.UpdateChecks -c Release
 

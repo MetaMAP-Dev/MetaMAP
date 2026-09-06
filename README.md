@@ -145,6 +145,9 @@ When a Grasshopper `Libraries` folder exists on the machine (macOS:
 Windows: `%APPDATA%\Grasshopper\Libraries`), the build also writes a `MetaMAP.ghlink` there
 pointing at that `dist` folder, so restarting Rhino loads the fresh build. The file is overwritten
 on every build and points at whichever configuration (Debug or Release) was built last.
+`dotnet test tests/MetaMAP.Core.Tests -c Release` runs the unit tests. They cover `MetaMAP.Core`
+— the OSM pipeline, ring geometry, height parsing and the projection — and need no Rhino
+installed, which is what the `MetaMAP.gha` / `MetaMAP.Core` split is for.
 `scripts/check_templates.py` validates the templates, and
 `dotnet run --project tests/MetaMAP.UpdateChecks -c Release` checks update notifications.
 GitHub Actions runs these checks on every push, builds the Yak package, and on a
