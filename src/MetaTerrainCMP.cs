@@ -16,6 +16,19 @@ public class MetaTerrainCMP : GH_Component
 {
     public const double MaxRadius = 5000.0;
 
+    /// <summary>
+    /// Metres sampled beyond the requested radius by default.
+    ///
+    /// An Overpass bbox query returns every building that TOUCHES the box, and "out geom" returns
+    /// each one whole, so MetaBUILDING's footprints routinely reach well past the radius the user
+    /// asked for. Measured against live data: at 300 m around Sultanahmet 18 of 82 footprints had
+    /// vertices outside the box, overhanging by up to 172 m; at 400 m around SoMa it was 73 of 535
+    /// and 208 m. Terrain that stops at the radius leaves those buildings with no ground under
+    /// them, and TerrainSampler then falls back to the closest point on the mesh edge - a wrong
+    /// elevation that nothing reports.
+    /// </summary>
+    public const double DefaultMargin = 250.0;
+
     public MetaTerrainCMP()
         : base("MetaTERRAIN", "MetaTERRAIN",
             $"Read terrain elevation data from Open-Meteo / Open-Elevation. {Environment.NewLine}Use 'Show Points' to control visibility of elevation points.",
@@ -35,8 +48,10 @@ public class MetaTerrainCMP : GH_Component
         pManager.AddNumberParameter("Radius", "R", $"Search radius in meters for terrain extraction (1 - {MaxRadius:F0}). Default: 300m", GH_ParamAccess.item);
         pManager.AddIntegerParameter("Grid Resolution", "GR", "Grid resolution for elevation sampling (3 - 50). Default: 10 (10x10 grid)", GH_ParamAccess.item);
         pManager.AddBooleanParameter("Show Points", "SP", "Show/hide terrain elevation points. Default: false", GH_ParamAccess.item);
+        // Appended last so existing definitions keep the input indices they were saved with.
+        pManager.AddNumberParameter("Margin", "M", $"Extra metres sampled beyond Radius, so buildings that straddle the edge still have ground under them. Overpass returns every building that touches the query box, whole, so MetaBUILDING's footprints reach past the radius - measured overhangs of 170-210m are normal. Where a footprint leaves the terrain the sampler falls back to the closest mesh point and the building sits at the wrong elevation. Raise Grid Resolution with this to keep the same ground detail. Default: {DefaultMargin:F0}m", GH_ParamAccess.item);
 
-        for (int i = 0; i < 5; i++) pManager[i].Optional = true;
+        for (int i = 0; i < 6; i++) pManager[i].Optional = true;
     }
 
     protected override void RegisterOutputParams(GH_OutputParamManager pManager)
@@ -56,12 +71,14 @@ public class MetaTerrainCMP : GH_Component
         double radius = 300.0;
         int gridResolution = 10;
         bool showPoints = false;
+        double margin = DefaultMargin;
 
         DA.GetData(0, ref lat);
         DA.GetData(1, ref lon);
         DA.GetData(2, ref radius);
         DA.GetData(3, ref gridResolution);
         DA.GetData(4, ref showPoints);
+        DA.GetData(5, ref margin);
 
         if (double.IsNaN(lat) || double.IsNaN(lon))
         {
@@ -78,9 +95,14 @@ public class MetaTerrainCMP : GH_Component
                 throw new Exception($"Radius must be between 1 and {MaxRadius:F0} meters");
             if (gridResolution < 3 || gridResolution > 50)
                 throw new Exception("Grid resolution must be between 3 and 50");
+            if (double.IsNaN(margin) || margin < 0)
+                throw new Exception("Margin must be zero or greater");
 
             var projection = new GeoProjection(lat, lon);
-            var grid = GenerateGrid(projection, radius, gridResolution);
+            // Sampled beyond the radius on purpose - see DefaultMargin. Still capped at MaxRadius
+            // so a large margin cannot push the elevation query past what the services will serve.
+            double sampledRadius = Math.Min(radius + margin, MaxRadius);
+            var grid = GenerateGrid(projection, sampledRadius, gridResolution);
 
             var samples = FetchElevations(grid, projection, log);
             if (samples.Count < 3)
@@ -113,7 +135,7 @@ public class MetaTerrainCMP : GH_Component
             DA.SetData(0, terrainBrep);
             DA.SetDataList(1, showPoints ? samples.Select(s => s.Point).ToList() : null);
             DA.SetDataList(2, showPoints ? samples.Select(s => s.Elevation).ToList() : null);
-            DA.SetData(3, $"Successfully processed terrain data. Location: {lat:F6}, {lon:F6}, Radius: {radius}m, Grid: {gridResolution}x{gridResolution}, " +
+            DA.SetData(3, $"Successfully processed terrain data. Location: {lat:F6}, {lon:F6}, Radius: {radius}m + {sampledRadius - radius:F0}m margin = {sampledRadius:F0}m sampled, Grid: {gridResolution}x{gridResolution} ({2 * sampledRadius / (gridResolution - 1):F0}m spacing), " +
                           $"Base elevation: {minElevation:F1}m a.s.l. Points: {(showPoints ? "Visible" : "Hidden")}. {string.Join(". ", log)}");
             DA.SetData(4, mesh);
         }

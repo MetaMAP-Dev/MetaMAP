@@ -57,6 +57,11 @@ The `MetaTerrain` component fetches elevation data to create a terrain mesh.
 - `Radius` (Number): The search radius in meters.
 - `Grid Resolution` (Integer): The resolution of the grid for elevation sampling.
 - `Show Points` (Boolean): A boolean to control the visibility of elevation points.
+- `Margin` (Number): Extra metres sampled beyond `Radius`, default 250. Overpass returns every
+  building that touches the query box, whole, so `MetaBuilding`'s footprints reach past the radius —
+  overhangs of 170–210 m are normal in dense areas. Without a margin those buildings have no ground
+  under them and are placed at the elevation of the nearest terrain edge instead. Raise
+  `Grid Resolution` alongside it to keep the same ground detail.
 - `Run` (Boolean): A boolean toggle to execute the data fetching and processing.
 
 **Outputs:**
