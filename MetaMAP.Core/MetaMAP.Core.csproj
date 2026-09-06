@@ -25,4 +25,16 @@
         <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
     </ItemGroup>
 
+    <!-- Keep the Core boundary executable. This inspects every resolved compile reference, so it
+         also catches Rhino dependencies introduced indirectly through a package or project
+         reference. It has no effect on the resulting assembly or on plug-in runtime behavior. -->
+    <Target Name="RejectRhinoDependenciesInCore" AfterTargets="ResolveReferences">
+        <ItemGroup>
+            <ForbiddenCoreReference Include="@(ReferencePath)"
+                Condition="$([System.Text.RegularExpressions.Regex]::IsMatch('%(ReferencePath.Filename)', '^(RhinoCommon|Grasshopper|Eto|System\.Drawing\.Common|System\.Windows\.Forms)$', System.Text.RegularExpressions.RegexOptions.IgnoreCase))" />
+        </ItemGroup>
+        <Error Condition="'@(ForbiddenCoreReference)' != ''"
+               Text="MetaMAP.Core must remain Rhino-free. Forbidden resolved reference(s): @(ForbiddenCoreReference->'%(Filename)%(Extension)', ', ')" />
+    </Target>
+
 </Project>
