@@ -1,0 +1,40 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+    <!--
+      Rhino-free core of MetaMAP: HTTP with retry/back-off and caching, the Overpass mirror
+      rotation, the loopback map-picker server, the geographic projection, and the OSM-to-footprint
+      pipeline. Nothing here references RhinoCommon or Grasshopper, so it compiles and runs on a
+      machine with no Rhino installed and can be unit-tested without launching one.
+
+      The rule this project exists to enforce: if a Rhino or Grasshopper reference is ever added
+      here, the build breaks, which is the point. Geometry that genuinely needs the kernel
+      (solid extrusion, Brep validity, meshing a trimmed surface) belongs in MetaMAP.csproj.
+
+      net8.0 matches the .gha. Core is loaded in-process as a dependency of MetaMAP.gha, so its
+      target framework is bound by the same Rhino host runtime and the two move together.
+    -->
+    <PropertyGroup>
+        <TargetFramework>net8.0</TargetFramework>
+        <LangVersion>12</LangVersion>
+        <RootNamespace>MetaMap</RootNamespace>
+        <Title>MetaMAP.Core</Title>
+        <Description>Rhino-free core of MetaMAP: networking, geocoding and OSM geometry assembly.</Description>
+    </PropertyGroup>
+
+    <ItemGroup>
+        <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
+    </ItemGroup>
+
+    <!-- Keep the Core boundary executable. This inspects every resolved compile reference, so it
+         also catches Rhino dependencies introduced indirectly through a package or project
+         reference. It has no effect on the resulting assembly or on plug-in runtime behavior. -->
+    <Target Name="RejectRhinoDependenciesInCore" AfterTargets="ResolveReferences">
+        <ItemGroup>
+            <ForbiddenCoreReference Include="@(ReferencePath)"
+                Condition="$([System.Text.RegularExpressions.Regex]::IsMatch('%(ReferencePath.Filename)', '^(RhinoCommon|Grasshopper|Eto|System\.Drawing\.Common|System\.Windows\.Forms)$', System.Text.RegularExpressions.RegexOptions.IgnoreCase))" />
+        </ItemGroup>
+        <Error Condition="'@(ForbiddenCoreReference)' != ''"
+               Text="MetaMAP.Core must remain Rhino-free. Forbidden resolved reference(s): @(ForbiddenCoreReference->'%(Filename)%(Extension)', ', ')" />
+    </Target>
+
+</Project>

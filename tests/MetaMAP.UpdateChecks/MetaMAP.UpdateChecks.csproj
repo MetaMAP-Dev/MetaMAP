@@ -5,7 +5,8 @@
     <ImplicitUsings>enable</ImplicitUsings>
   </PropertyGroup>
   <ItemGroup>
-    <Compile Include="../../src/YakUpdateChecker.cs" Link="YakUpdateChecker.cs" />
-    <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
+    <!-- References the Rhino-free core rather than link-compiling single source files out of the
+         .gha, which is what this project had to do before MetaMAP.Core existed. -->
+    <ProjectReference Include="../../MetaMAP.Core/MetaMAP.Core.csproj" />
   </ItemGroup>
 </Project>

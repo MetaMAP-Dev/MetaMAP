@@ -46,7 +46,7 @@ The `MetaTerrain` component fetches elevation data to create a terrain mesh.
 
 - Fetches elevation data from Open-Meteo, falling back to Open-Elevation and OSM contour lines.
 - Retries transient failures and caches downloaded elevations.
-- Creates a Delaunay-triangulated terrain surface (lowest point at Z=0).
+- Creates a triangulated terrain surface (lowest point at Z=0) from the regular sampling grid.
 - Uses the same local projection as the building components so everything lines up.
 - Outputs elevation points and values for further analysis.
 
@@ -57,14 +57,22 @@ The `MetaTerrain` component fetches elevation data to create a terrain mesh.
 - `Radius` (Number): The search radius in meters.
 - `Grid Resolution` (Integer): The resolution of the grid for elevation sampling.
 - `Show Points` (Boolean): A boolean to control the visibility of elevation points.
+- `Margin` (Number): Extra metres sampled beyond `Radius`, default 250. Overpass returns every
+  building that touches the query box, whole, so `MetaBuilding`'s footprints reach past the radius —
+  overhangs of 170–210 m are normal in dense areas. Without a margin those buildings have no ground
+  under them and are placed at the elevation of the nearest terrain edge instead. Raise
+  `Grid Resolution` alongside it to keep the same ground detail.
 - `Run` (Boolean): A boolean toggle to execute the data fetching and processing.
 
 **Outputs:**
 
-- `Terrain Mesh` (Mesh): The generated terrain mesh.
+- `Terrain Brep` (Brep): The terrain as a Brep. Built only when this output is connected — it
+  carries one trimmed face per triangle, so prefer `Terrain Mesh` unless you need a Brep.
 - `Elevation Points` (Point): A list of points with elevation data.
 - `Elevation Values` (Number): A list of elevation values in meters.
 - `Status` (Text): The processing status and other information.
+- `Terrain Mesh` (Mesh): The generated terrain mesh. This is what `MetaBuilding` samples, and what
+  mesh-based tools (Ladybug, Radiance, OpenFOAM) want.
 
 ### 3. MetaFetch
 
@@ -121,25 +129,30 @@ The component only checks for updates; Rhino Package Manager performs the instal
 
 ## Dependencies
 
-- [Rhino 8](https://www.rhino3d.com/) (Windows or macOS)
+- [Rhino 8.27 or later](https://www.rhino3d.com/) (Windows or macOS). MetaMAP is a `net8.0`
+  assembly, and Rhino releases before 8.27 host plug-ins on .NET 7, which cannot load it.
 - [Grasshopper](https://www.grasshopper3d.com/)
 
-Only `MetaMAP.gha`, `Newtonsoft.Json.dll`, the `Templates` folder and the package icon are
-shipped. Rhino provides Eto, System.Drawing and Windows Forms on both platforms; do **not** copy
-other assemblies next to the plugin, that breaks loading on macOS ("Ribbon could not be populated").
+Only `MetaMAP.gha`, `MetaMAP.Core.dll`, `Newtonsoft.Json.dll`, `LICENSE.md`, the `Templates`
+folder and the package icon are shipped. Rhino provides Eto, System.Drawing and Windows Forms on
+both platforms; do **not** copy other assemblies next to the plugin, that breaks loading on macOS
+("Ribbon could not be populated").
 
 ## Building from source
 
 ```bash
-dotnet build MetaMAP.csproj -c Release -f net7.0
+dotnet build MetaMAP.csproj -c Release -f net8.0
 ```
 
-The build writes the package contents to `bin/Release/net7.0/dist`.
+The build writes the package contents to `bin/Release/net8.0/dist`.
 When a Grasshopper `Libraries` folder exists on the machine (macOS:
 `~/Library/Application Support/McNeel/Rhinoceros/8.0/Plug-ins/Grasshopper (b45a29b1-...)/Libraries`,
 Windows: `%APPDATA%\Grasshopper\Libraries`), the build also writes a `MetaMAP.ghlink` there
 pointing at that `dist` folder, so restarting Rhino loads the fresh build. The file is overwritten
 on every build and points at whichever configuration (Debug or Release) was built last.
+`dotnet test tests/MetaMAP.Core.Tests -c Release` runs the unit tests. They cover `MetaMAP.Core`
+— the OSM pipeline, ring geometry, height parsing and the projection — and need no Rhino
+installed, which is what the `MetaMAP.gha` / `MetaMAP.Core` split is for.
 `scripts/check_templates.py` validates the templates, and
 `dotnet run --project tests/MetaMAP.UpdateChecks -c Release` checks update notifications.
 GitHub Actions runs these checks on every push, builds the Yak package, and on a
@@ -158,6 +171,12 @@ If moving from a manual installation, remove the old MetaMAP files from Grasshop
   downloaded areas keep working from the cache (`<temp>/MetaMAP/cache`).
 - **Template menu does nothing**: make sure the `Templates` folder sits next to `MetaMAP.gha`, or
   feed a folder path into the `Directory` input.
+
+## License
+
+MetaMAP is free software licensed under the [GNU General Public License v3.0 or later](LICENSE.md).
+It comes with no warranty. Redistributions and derived works must also be GPL-3.0-or-later and
+must make their source available.
 
 ## Disclaimer
 

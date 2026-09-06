@@ -16,6 +16,19 @@ public class MetaTerrainCMP : GH_Component
 {
     public const double MaxRadius = 5000.0;
 
+    /// <summary>
+    /// Metres sampled beyond the requested radius by default.
+    ///
+    /// An Overpass bbox query returns every building that TOUCHES the box, and "out geom" returns
+    /// each one whole, so MetaBUILDING's footprints routinely reach well past the radius the user
+    /// asked for. Measured against live data: at 300 m around Sultanahmet 18 of 82 footprints had
+    /// vertices outside the box, overhanging by up to 172 m; at 400 m around SoMa it was 73 of 535
+    /// and 208 m. Terrain that stops at the radius leaves those buildings with no ground under
+    /// them, and TerrainSampler then falls back to the closest point on the mesh edge - a wrong
+    /// elevation that nothing reports.
+    /// </summary>
+    public const double DefaultMargin = 250.0;
+
     public MetaTerrainCMP()
         : base("MetaTERRAIN", "MetaTERRAIN",
             $"Read terrain elevation data from Open-Meteo / Open-Elevation. {Environment.NewLine}Use 'Show Points' to control visibility of elevation points.",
@@ -35,16 +48,20 @@ public class MetaTerrainCMP : GH_Component
         pManager.AddNumberParameter("Radius", "R", $"Search radius in meters for terrain extraction (1 - {MaxRadius:F0}). Default: 300m", GH_ParamAccess.item);
         pManager.AddIntegerParameter("Grid Resolution", "GR", "Grid resolution for elevation sampling (3 - 50). Default: 10 (10x10 grid)", GH_ParamAccess.item);
         pManager.AddBooleanParameter("Show Points", "SP", "Show/hide terrain elevation points. Default: false", GH_ParamAccess.item);
+        // Appended last so existing definitions keep the input indices they were saved with.
+        pManager.AddNumberParameter("Margin", "M", $"Extra metres sampled beyond Radius, so buildings that straddle the edge still have ground under them. Overpass returns every building that touches the query box, whole, so MetaBUILDING's footprints reach past the radius - measured overhangs of 170-210m are normal. Where a footprint leaves the terrain the sampler falls back to the closest mesh point and the building sits at the wrong elevation. Raise Grid Resolution with this to keep the same ground detail. Default: {DefaultMargin:F0}m", GH_ParamAccess.item);
 
-        for (int i = 0; i < 5; i++) pManager[i].Optional = true;
+        for (int i = 0; i < 6; i++) pManager[i].Optional = true;
     }
 
     protected override void RegisterOutputParams(GH_OutputParamManager pManager)
     {
-        pManager.AddBrepParameter("Terrain Brep", "TB", "Generated terrain brep with elevation data", GH_ParamAccess.item);
+        pManager.AddBrepParameter("Terrain Brep", "TB", "Generated terrain brep with elevation data. Prefer the Terrain Mesh output: the Brep carries one trimmed face per triangle and is only built when this output is connected.", GH_ParamAccess.item);
         pManager.AddPointParameter("Elevation Points", "EP", "Grid points with elevation data", GH_ParamAccess.list);
         pManager.AddNumberParameter("Elevation Values", "EV", "Elevation values in meters", GH_ParamAccess.list);
         pManager.AddTextParameter("Status", "S", "Processing status and information", GH_ParamAccess.item);
+        // Appended last so existing definitions keep the output indices they were saved with.
+        pManager.AddMeshParameter("Terrain Mesh", "TM", "Generated terrain mesh with elevation data. This is the terrain MetaBUILDING samples, and what mesh-based tools (Ladybug, Radiance, OpenFOAM) want", GH_ParamAccess.item);
     }
 
     protected override void SolveInstance(IGH_DataAccess DA)
@@ -54,12 +71,14 @@ public class MetaTerrainCMP : GH_Component
         double radius = 300.0;
         int gridResolution = 10;
         bool showPoints = false;
+        double margin = DefaultMargin;
 
         DA.GetData(0, ref lat);
         DA.GetData(1, ref lon);
         DA.GetData(2, ref radius);
         DA.GetData(3, ref gridResolution);
         DA.GetData(4, ref showPoints);
+        DA.GetData(5, ref margin);
 
         if (double.IsNaN(lat) || double.IsNaN(lon))
         {
@@ -76,9 +95,14 @@ public class MetaTerrainCMP : GH_Component
                 throw new Exception($"Radius must be between 1 and {MaxRadius:F0} meters");
             if (gridResolution < 3 || gridResolution > 50)
                 throw new Exception("Grid resolution must be between 3 and 50");
+            if (double.IsNaN(margin) || margin < 0)
+                throw new Exception("Margin must be zero or greater");
 
             var projection = new GeoProjection(lat, lon);
-            var grid = GenerateGrid(projection, radius, gridResolution);
+            // Sampled beyond the radius on purpose - see DefaultMargin. Still capped at MaxRadius
+            // so a large margin cannot push the elevation query past what the services will serve.
+            double sampledRadius = Math.Min(radius + margin, MaxRadius);
+            var grid = GenerateGrid(projection, sampledRadius, gridResolution);
 
             var samples = FetchElevations(grid, projection, log);
             if (samples.Count < 3)
@@ -92,21 +116,28 @@ public class MetaTerrainCMP : GH_Component
                 s.Point = new Point3d(s.Point.X, s.Point.Y, s.Elevation);
             }
 
-            var mesh = CreateTerrainMesh(samples);
+            var mesh = CreateTerrainMesh(samples, gridResolution);
             if (mesh == null) throw new Exception("Terrain mesh could not be triangulated");
 
-            Brep terrainBrep = Brep.CreateFromMesh(mesh, true);
-            if (terrainBrep == null || !terrainBrep.IsValid)
+            // Brep.CreateFromMesh turns every triangle into a trimmed face - nearly 5000 of them at
+            // resolution 50 - so only pay for it when something is wired to the Brep output.
+            Brep terrainBrep = null;
+            if (Params.Output[0].Recipients.Count > 0)
             {
-                AddRuntimeMessage(GH_RuntimeMessageLevel.Warning, "Terrain mesh could not be converted to a Brep; output is empty.");
-                terrainBrep = null;
+                terrainBrep = Brep.CreateFromMesh(mesh, true);
+                if (terrainBrep == null || !terrainBrep.IsValid)
+                {
+                    AddRuntimeMessage(GH_RuntimeMessageLevel.Warning, "Terrain mesh could not be converted to a Brep; use the Terrain Mesh output instead.");
+                    terrainBrep = null;
+                }
             }
 
             DA.SetData(0, terrainBrep);
             DA.SetDataList(1, showPoints ? samples.Select(s => s.Point).ToList() : null);
             DA.SetDataList(2, showPoints ? samples.Select(s => s.Elevation).ToList() : null);
-            DA.SetData(3, $"Successfully processed terrain data. Location: {lat:F6}, {lon:F6}, Radius: {radius}m, Grid: {gridResolution}x{gridResolution}, " +
+            DA.SetData(3, $"Successfully processed terrain data. Location: {lat:F6}, {lon:F6}, Radius: {radius}m + {sampledRadius - radius:F0}m margin = {sampledRadius:F0}m sampled, Grid: {gridResolution}x{gridResolution} ({2 * sampledRadius / (gridResolution - 1):F0}m spacing), " +
                           $"Base elevation: {minElevation:F1}m a.s.l. Points: {(showPoints ? "Visible" : "Hidden")}. {string.Join(". ", log)}");
+            DA.SetData(4, mesh);
         }
         catch (Exception ex)
         {
@@ -121,6 +152,7 @@ public class MetaTerrainCMP : GH_Component
         DA.SetDataList(1, showPoints ? new List<Point3d>() : null);
         DA.SetDataList(2, showPoints ? new List<double>() : null);
         DA.SetData(3, status);
+        DA.SetData(4, null);
     }
 
     // -------------------------------------------------------------------
@@ -150,7 +182,7 @@ public class MetaTerrainCMP : GH_Component
             {
                 double lat = south + (north - south) * i / (resolution - 1);
                 double lon = west + (east - west) * j / (resolution - 1);
-                points.Add(new GridPoint { Lat = lat, Lon = lon, Point = projection.ToLocal(lat, lon) });
+                points.Add(new GridPoint { Lat = lat, Lon = lon, Point = projection.ToLocal(lat, lon).ToPoint3d() });
             }
         }
         return points;
@@ -316,7 +348,7 @@ public class MetaTerrainCMP : GH_Component
                     contours.Add(new ContourLine
                     {
                         Elevation = ele.Value,
-                        Points = e.Geometry.Select(c => projection.ToLocal(c.Lat, c.Lon, ele.Value)).ToList()
+                        Points = e.Geometry.Select(c => projection.ToLocal(c.Lat, c.Lon, ele.Value).ToPoint3d()).ToList()
                     });
                 }
             }
@@ -359,28 +391,35 @@ public class MetaTerrainCMP : GH_Component
     // Mesh
     // -------------------------------------------------------------------
 
-    private static Mesh CreateTerrainMesh(List<ElevationSample> samples)
+    /// <summary>
+    /// Triangulates the elevation samples by index rather than by Delaunay: GenerateGrid emits a
+    /// regular resolution x resolution lattice row-major (south to north, west to east), and
+    /// FetchElevations only accepts a source that answered every grid point, so sample
+    /// i * resolution + j is the lattice node at row i, column j. Winding is counter-clockwise
+    /// seen from +Z, which points the normals up.
+    /// </summary>
+    private static Mesh CreateTerrainMesh(List<ElevationSample> samples, int resolution)
     {
-        if (samples.Count < 3) return null;
-        try
-        {
-            var nodes = new Grasshopper.Kernel.Geometry.Node2List();
-            foreach (var s in samples)
-                nodes.Append(new Grasshopper.Kernel.Geometry.Node2(s.Point.X, s.Point.Y));
+        if (samples.Count != resolution * resolution) return null;
 
-            var faces = Grasshopper.Kernel.Geometry.Delaunay.Solver.Solve_Faces(nodes, 0);
-            var mesh = new Mesh();
-            foreach (var s in samples) mesh.Vertices.Add(s.Point);
-            foreach (var f in faces) mesh.Faces.AddFace(f.A, f.B, f.C);
+        var mesh = new Mesh();
+        foreach (var s in samples) mesh.Vertices.Add(s.Point);
 
-            if (mesh.Faces.Count == 0) return null;
-            mesh.Normals.ComputeNormals();
-            mesh.Compact();
-            return mesh;
-        }
-        catch
+        for (int i = 0; i < resolution - 1; i++)
         {
-            return null;
+            for (int j = 0; j < resolution - 1; j++)
+            {
+                int a = i * resolution + j;
+                int b = a + 1;
+                int c = (i + 1) * resolution + j + 1;
+                int d = c - 1;
+                mesh.Faces.AddFace(a, b, c);
+                mesh.Faces.AddFace(a, c, d);
+            }
         }
+
+        if (mesh.Faces.Count == 0) return null;
+        mesh.Normals.ComputeNormals();
+        return mesh;
     }
 }

@@ -205,7 +205,8 @@ namespace MetaMap
 
             double startLat = _hasValue ? _lat : 41.041122;
             double startLng = _hasValue ? _lng : 28.989991;
-            string html = MapPickerServer.BuildHtml(startLat, startLng, _hasValue ? 15 : 12);
+            string html = MapPickerServer.BuildHtml(startLat, startLng, _hasValue ? 15 : 12,
+                MetaResources.GetString("leaflet.css"), MetaResources.GetString("leaflet.js"));
             _server = MapPickerServer.Start(html, (lat, lng) => OnCoordinatesPicked(lat, lng, "map"));
             return _server;
         }

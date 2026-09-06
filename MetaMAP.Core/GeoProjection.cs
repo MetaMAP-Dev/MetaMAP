@@ -1,5 +1,4 @@
 using System;
-using Rhino.Geometry;
 
 namespace MetaMap
 {
@@ -40,11 +39,11 @@ namespace MetaMap
             return Math.Max(v, 1.0);
         }
 
-        public Point3d ToLocal(double lat, double lon, double z = 0.0)
+        public Vec3 ToLocal(double lat, double lon, double z = 0.0)
         {
             double x = (lon - CenterLon) * MetersPerDegreeLon;
             double y = (lat - CenterLat) * MetersPerDegreeLat;
-            return new Point3d(x, y, z);
+            return new Vec3(x, y, z);
         }
 
         public void ToGeographic(double x, double y, out double lat, out double lon)

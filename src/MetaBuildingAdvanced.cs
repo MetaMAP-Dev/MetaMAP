@@ -85,7 +85,7 @@ namespace MetaMap
                 if (double.IsNaN(radius) || radius <= 0 || radius > MetaBuildingCMP.MaxRadius)
                     throw new Exception($"Radius must be between 1 and {MetaBuildingCMP.MaxRadius:F0} meters");
 
-                var terrainMesh = OsmBuildingGeometry.ToTerrainMesh(terrainGoo);
+                var terrainMesh = BuildingSolids.ToTerrainMesh(terrainGoo);
                 if (terrainGoo != null && terrainMesh == null)
                     Log("Terrain input could not be converted to a mesh; buildings are placed at Z=0.");
                 else if (terrainMesh != null)
@@ -204,7 +204,7 @@ namespace MetaMap
             }
             Log($"Unique features after deduplication: {uniqueFeatures.Count}");
 
-            var sampler = new OsmBuildingGeometry.TerrainSampler(terrainMesh);
+            var sampler = new BuildingSolids.TerrainSampler(terrainMesh);
             int failed = 0;
             foreach (var feature in uniqueFeatures.Values)
             {
@@ -266,7 +266,7 @@ namespace MetaMap
             return response.Body;
         }
 
-        private List<Brep> CreateBuildingBreps(JObject geometry, double height, GeoProjection projection, OsmBuildingGeometry.TerrainSampler sampler, double? sinkMargin)
+        private List<Brep> CreateBuildingBreps(JObject geometry, double height, GeoProjection projection, BuildingSolids.TerrainSampler sampler, double? sinkMargin)
         {
             var breps = new List<Brep>();
             if (geometry == null) return breps;
@@ -300,7 +300,7 @@ namespace MetaMap
 
                     double baseZ = sampler.IsAvailable ? sampler.AverageUnder(outer) : 0.0;
                     double? bottomZ = sinkMargin.HasValue && sampler.IsAvailable ? sampler.MinUnder(outer) - sinkMargin.Value : (double?)null;
-                    var solid = OsmBuildingGeometry.CreateSolid(footprint, baseZ, bottomZ: bottomZ);
+                    var solid = BuildingSolids.CreateSolid(footprint, baseZ, bottomZ: bottomZ);
                     if (solid != null) breps.Add(solid);
                 }
                 catch (Exception ex)
@@ -312,9 +312,9 @@ namespace MetaMap
             return breps;
         }
 
-        private static List<Point3d> ToPoints(JArray coords, GeoProjection projection)
+        private static List<Vec3> ToPoints(JArray coords, GeoProjection projection)
         {
-            var points = new List<Point3d>();
+            var points = new List<Vec3>();
             if (coords == null) return points;
             foreach (var coord in coords)
             {

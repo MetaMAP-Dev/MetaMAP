@@ -29,7 +29,7 @@
    - Build the project on Linux and validate the templates
    - Fail if a Rhino-provided assembly sneaked into the distribution folder,
      or if the tag does not match `manifest.yml` / `MetaMAP.csproj`
-   - Build the Yak package (`metamap-<version>-rh8_0-any.yak`)
+   - Build the Yak package (`metamap-<version>-rh8_27-any.yak`)
    - Create a new GitHub Release for `v*` tags with the `.yak` file attached
    - **Push the package to the Rhino Package Manager** (job `publish-yak`)
 
@@ -57,10 +57,12 @@ repository secret `YAK_TOKEN`:
 After that, every `vX.Y.Z` tag publishes the version automatically. Yak refuses
 to overwrite an existing version, so bump the version before tagging.
 
-Note on Rhino compatibility: MetaMAP is compiled against the Rhino 8.0
-Grasshopper package so the Yak package carries the `rh8_0-any` tag and is
-offered to every Rhino 8 user on Windows and macOS. Bumping the Grasshopper
-NuGet version in `MetaMAP.csproj` raises that minimum (CI fails on purpose).
+Note on Rhino compatibility: MetaMAP is compiled against the Rhino 8.27
+Grasshopper package, so the Yak package carries the `rh8_27-any` tag and is
+offered to Rhino 8.27 and later on Windows and macOS. The floor is 8.27 rather
+than 8.0 because the assembly targets `net8.0`, and earlier Rhino 8 releases
+host plug-ins on .NET 7, which cannot load it. Changing the Grasshopper NuGet
+version in `MetaMAP.csproj` moves that minimum (CI fails on purpose).
 
 ## How Update Checks Work
 
@@ -81,9 +83,9 @@ Grasshopper's `Libraries` folder before installing through Package Manager.
 Normally not needed - CI does this on every tag. To publish/update the Yak
 package by hand (for example from a machine without GitHub access):
 
-1. **Build** (produces the installable folder `bin/Release/net7.0/dist`):
+1. **Build** (produces the installable folder `bin/Release/net8.0/dist`):
    ```bash
-   dotnet build MetaMAP.csproj -c Release -f net7.0
+   dotnet build MetaMAP.csproj -c Release -f net8.0
    ```
 
 2. **Build the Yak package** from the `dist` folder only. It already contains
@@ -95,18 +97,18 @@ package by hand (for example from a machine without GitHub access):
    (find `yak` at `/Applications/Rhino 8.app/Contents/Resources/bin/yak` on Mac, or
    `C:\Program Files\Rhino 8\System\yak.exe` on Windows):
    ```bash
-   cd bin/Release/net7.0/dist
+   cd bin/Release/net8.0/dist
    yak build
    ```
-   This produces `metamap-0.0.60-rh8_0-any.yak` — the `any` tag means one
+   This produces `metamap-0.0.61-rh8_27-any.yak` — the `any` tag means one
    package serves both Windows and Mac.
 
 3. **Push** (requires being logged in via `yak login`):
    ```bash
-   yak push metamap-0.0.60-rh8_0-any.yak
+   yak push metamap-0.0.61-rh8_27-any.yak
    ```
 
-Keep `manifest.yml`'s `version` in sync with `MetaMAP.csproj` on every release.
+Keep `manifest.yml`'s `version` in sync with `Directory.Build.props` on every release.
 
 ## Benefits
 

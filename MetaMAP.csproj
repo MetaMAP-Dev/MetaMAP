@@ -1,9 +1,12 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
     <PropertyGroup>
-        <!-- net7.0 (no -windows suffix, no UseWindowsForms) builds one cross-platform
-             assembly Rhino 8 loads on both Windows and Mac. -->
-        <TargetFrameworks>net7.0</TargetFrameworks>
+        <!-- net8.0 (no -windows suffix, no UseWindowsForms) builds one cross-platform
+             assembly Rhino 8 loads on both Windows and Mac. Rhino 8 hosts plug-ins on .NET 8:
+             its dotnetstart.8.runtimeconfig.json asks for Microsoft.NETCore.App 8.0.0 with
+             rollForward LatestMinor. That rolls forward within 8.x only, so net9.0 would not
+             load - see the Grasshopper reference below for the minimum-version consequence. -->
+        <TargetFrameworks>net8.0</TargetFrameworks>
         <Title>MetaMAP</Title>
         <Company>Ilker Karadag</Company>
         <Description>MetaMAP component for advanced mapping and analysis.</Description>
@@ -13,9 +16,6 @@
         <Keyword3>analysis</Keyword3>
         <NeutralLanguage>en-US</NeutralLanguage>
         <PackageIcon>Resources\MetaBuilding.png</PackageIcon>
-        <Version>0.0.60</Version>
-        <AssemblyVersion>0.0.60</AssemblyVersion>
-        <FileVersion>0.0.60</FileVersion>
         <LangVersion>12</LangVersion>
         <RootNamespace>MetaMAP</RootNamespace>
         <GenerateAssemblyInfo>true</GenerateAssemblyInfo>
@@ -29,20 +29,42 @@
 
     <ItemGroup>
         <!-- Rhino / Grasshopper API (compile-time only; Rhino supplies them at runtime).
-             Deliberately the first Rhino 8 release: the Yak package inherits its minimum Rhino
-             version from this reference (distribution tag rh8_0-any = every Rhino 8 on Windows and Mac). -->
-        <PackageReference Include="Grasshopper" Version="8.0.23304.9001" IncludeAssets="compile;build" />
+             The Yak package inherits its minimum Rhino version from this reference, so this pin
+             is the plug-in's compatibility floor.
+
+             8.27 is not a preference, it is the lowest version that works. Rhino 8.19 and older
+             host plug-ins on .NET 7 and cannot load a net8.0 assembly at all, so the floor could
+             not be below 8.20 regardless. Of the stable packages above that (8.21, 8.23, 8.24,
+             8.25, 8.26) every one fails this build with NETSDK1073 - their targets pull a
+             WindowsDesktop FrameworkReference that does not resolve for a plain net8.0 build on
+             macOS. Setting EnableWindowsTargeting=true makes them build, but it also drags
+             System.Drawing.Common and System.Windows.Forms up to 8.0.0.0, which is exactly the
+             runtime mismatch the reference below exists to avoid. 8.27 builds without the flag
+             and emits 7.0.0.0. -->
+        <PackageReference Include="Grasshopper" Version="8.27.26019.16021" IncludeAssets="compile;build" />
         <!-- System.Drawing types used by the Grasshopper API (icons, canvas rendering). Compile-time
              only: Rhino ships its own System.Drawing.Common on both platforms. -->
+        <!-- 7.0.0, NOT 8.0.0, even though this assembly targets net8.0. Rhino 8.32 ships
+             System.Drawing.Common at assembly version 7.0.0.0 and RhinoCommon itself references
+             7.0.0.0; .NET binds forward only, so a reference to 8.0.0.0 cannot be satisfied at
+             runtime and the .gha fails to load. Same pin Eddy3D uses on net8.0. -->
         <PackageReference Include="System.Drawing.Common" Version="7.0.0" ExcludeAssets="runtime" />
         <!-- Shipped next to the .gha (see Distribution target). -->
         <PackageReference Include="Newtonsoft.Json" Version="13.0.3" GeneratePathProperty="true" />
     </ItemGroup>
 
+    <ItemGroup>
+        <!-- The Rhino-free half. Shipped next to the .gha by the Distribution target. -->
+        <ProjectReference Include="MetaMAP.Core\MetaMAP.Core.csproj" />
+    </ItemGroup>
+
     <!-- GH_Component's menu API (AppendAdditionalComponentMenuItems) is typed against
          System.Windows.Forms regardless of platform. Reference the compile-time-only reference
          assemblies; at runtime Rhino/Grasshopper itself supplies the real implementation on both
-         Windows and Mac. See https://discourse.mcneel.com/t/windows-forms-on-gh-and-rhino-8/171307 -->
+         Windows and Mac. See https://discourse.mcneel.com/t/windows-forms-on-gh-and-rhino-8/171307
+         The 7.0 reference assemblies are deliberate on a net8.0 target: Rhino ships
+         System.Windows.Forms at assembly version 7.0.0.0, and a reference to 8.0.0.0 would not
+         bind at runtime. -->
     <ItemGroup>
         <PackageReference Include="Microsoft.WindowsDesktop.App.Ref" Version="7.0.0" GeneratePathProperty="true" ExcludeAssets="all" />
         <Reference Include="$(PkgMicrosoft_WindowsDesktop_App_Ref)\ref\net7.0\System.Windows.Forms.dll" Private="false" />
@@ -50,7 +72,10 @@
 
     <!-- Icons, Leaflet script and stylesheet are plain manifest resources (see src/MetaResources.cs). -->
     <ItemGroup>
+        <!-- Both live under this project's directory, so the SDK's **/*.cs glob would compile
+             them into the .gha as well and every Core type would exist twice. -->
         <Compile Remove="tests\**\*.cs" />
+        <Compile Remove="MetaMAP.Core\**\*.cs" />
         <EmbeddedResource Include="Resources\*.png;Resources\leaflet.css;Resources\leaflet.js" LogicalName="MetaMAP.Resources.%(Filename)%(Extension)" />
         <None Include="Templates\**\*.*">
             <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
@@ -82,7 +107,9 @@
         </ItemGroup>
         <RemoveDir Directories="$(DistDir)" />
         <MakeDir Directories="$(DistDir)" />
-        <Copy SourceFiles="$(TargetDir)$(TargetName).gha;$(TargetDir)Newtonsoft.Json.dll;$(TargetDir)version.txt;$(MSBuildProjectDirectory)\manifest.yml" DestinationFolder="$(DistDir)" />
+        <!-- LICENSE.md ships with the binary: GPLv3 section 4 requires the license to accompany
+             every conveyed copy, and the Yak package is how users receive one. -->
+        <Copy SourceFiles="$(TargetDir)$(TargetName).gha;$(TargetDir)MetaMAP.Core.dll;$(TargetDir)Newtonsoft.Json.dll;$(TargetDir)version.txt;$(MSBuildProjectDirectory)\manifest.yml;$(MSBuildProjectDirectory)\LICENSE.md" DestinationFolder="$(DistDir)" />
         <!-- manifest.yml points at this icon; the package manager shows it in the plug-in list. -->
         <Copy SourceFiles="$(MSBuildProjectDirectory)\Resources\MetaBuilding.png" DestinationFolder="$(DistDir)Resources" />
         <Copy SourceFiles="@(DistTemplates)" DestinationFiles="@(DistTemplates->'$(DistDir)Templates\%(RecursiveDir)%(Filename)%(Extension)')" />
