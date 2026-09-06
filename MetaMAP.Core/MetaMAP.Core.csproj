@@ -10,11 +10,11 @@
       here, the build breaks, which is the point. Geometry that genuinely needs the kernel
       (solid extrusion, Brep validity, meshing a trimmed surface) belongs in MetaMAP.csproj.
 
-      net7.0 matches the .gha: MetaMAP targets net7.0 because that is what Rhino 8 loads, and a
-      net8.0 core could not be referenced by it.
+      net8.0 matches the .gha. Core is loaded in-process as a dependency of MetaMAP.gha, so its
+      target framework is bound by the same Rhino host runtime and the two move together.
     -->
     <PropertyGroup>
-        <TargetFramework>net7.0</TargetFramework>
+        <TargetFramework>net8.0</TargetFramework>
         <LangVersion>12</LangVersion>
         <RootNamespace>MetaMap</RootNamespace>
         <Title>MetaMAP.Core</Title>

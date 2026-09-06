@@ -1,9 +1,12 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
     <PropertyGroup>
-        <!-- net7.0 (no -windows suffix, no UseWindowsForms) builds one cross-platform
-             assembly Rhino 8 loads on both Windows and Mac. -->
-        <TargetFrameworks>net7.0</TargetFrameworks>
+        <!-- net8.0 (no -windows suffix, no UseWindowsForms) builds one cross-platform
+             assembly Rhino 8 loads on both Windows and Mac. Rhino 8 hosts plug-ins on .NET 8:
+             its dotnetstart.8.runtimeconfig.json asks for Microsoft.NETCore.App 8.0.0 with
+             rollForward LatestMinor. That rolls forward within 8.x only, so net9.0 would not
+             load - see the Grasshopper reference below for the minimum-version consequence. -->
+        <TargetFrameworks>net8.0</TargetFrameworks>
         <Title>MetaMAP</Title>
         <Company>Ilker Karadag</Company>
         <Description>MetaMAP component for advanced mapping and analysis.</Description>
@@ -26,12 +29,14 @@
 
     <ItemGroup>
         <!-- Rhino / Grasshopper API (compile-time only; Rhino supplies them at runtime).
-             Deliberately the first Rhino 8 release: the Yak package inherits its minimum Rhino
-             version from this reference (distribution tag rh8_0-any = every Rhino 8 on Windows and Mac). -->
-        <PackageReference Include="Grasshopper" Version="8.0.23304.9001" IncludeAssets="compile;build" />
+             The Yak package inherits its minimum Rhino version from this reference, so this pin
+             is the plug-in's compatibility floor. 8.27 rather than 8.0 because the assembly
+             targets net8.0 and early Rhino 8 releases host plug-ins on .NET 7, which cannot load
+             it. Same pin Eddy3D ships against. -->
+        <PackageReference Include="Grasshopper" Version="8.27.26019.16021" IncludeAssets="compile;build" />
         <!-- System.Drawing types used by the Grasshopper API (icons, canvas rendering). Compile-time
              only: Rhino ships its own System.Drawing.Common on both platforms. -->
-        <PackageReference Include="System.Drawing.Common" Version="7.0.0" ExcludeAssets="runtime" />
+        <PackageReference Include="System.Drawing.Common" Version="8.0.0" ExcludeAssets="runtime" />
         <!-- Shipped next to the .gha (see Distribution target). -->
         <PackageReference Include="Newtonsoft.Json" Version="13.0.3" GeneratePathProperty="true" />
     </ItemGroup>
@@ -46,8 +51,8 @@
          assemblies; at runtime Rhino/Grasshopper itself supplies the real implementation on both
          Windows and Mac. See https://discourse.mcneel.com/t/windows-forms-on-gh-and-rhino-8/171307 -->
     <ItemGroup>
-        <PackageReference Include="Microsoft.WindowsDesktop.App.Ref" Version="7.0.0" GeneratePathProperty="true" ExcludeAssets="all" />
-        <Reference Include="$(PkgMicrosoft_WindowsDesktop_App_Ref)\ref\net7.0\System.Windows.Forms.dll" Private="false" />
+        <PackageReference Include="Microsoft.WindowsDesktop.App.Ref" Version="8.0.0" GeneratePathProperty="true" ExcludeAssets="all" />
+        <Reference Include="$(PkgMicrosoft_WindowsDesktop_App_Ref)\ref\net8.0\System.Windows.Forms.dll" Private="false" />
     </ItemGroup>
 
     <!-- Icons, Leaflet script and stylesheet are plain manifest resources (see src/MetaResources.cs). -->

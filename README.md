@@ -46,7 +46,7 @@ The `MetaTerrain` component fetches elevation data to create a terrain mesh.
 
 - Fetches elevation data from Open-Meteo, falling back to Open-Elevation and OSM contour lines.
 - Retries transient failures and caches downloaded elevations.
-- Creates a Delaunay-triangulated terrain surface (lowest point at Z=0).
+- Creates a triangulated terrain surface (lowest point at Z=0) from the regular sampling grid.
 - Uses the same local projection as the building components so everything lines up.
 - Outputs elevation points and values for further analysis.
 
@@ -61,10 +61,13 @@ The `MetaTerrain` component fetches elevation data to create a terrain mesh.
 
 **Outputs:**
 
-- `Terrain Mesh` (Mesh): The generated terrain mesh.
+- `Terrain Brep` (Brep): The terrain as a Brep. Built only when this output is connected — it
+  carries one trimmed face per triangle, so prefer `Terrain Mesh` unless you need a Brep.
 - `Elevation Points` (Point): A list of points with elevation data.
 - `Elevation Values` (Number): A list of elevation values in meters.
 - `Status` (Text): The processing status and other information.
+- `Terrain Mesh` (Mesh): The generated terrain mesh. This is what `MetaBuilding` samples, and what
+  mesh-based tools (Ladybug, Radiance, OpenFOAM) want.
 
 ### 3. MetaFetch
 
@@ -121,20 +124,22 @@ The component only checks for updates; Rhino Package Manager performs the instal
 
 ## Dependencies
 
-- [Rhino 8](https://www.rhino3d.com/) (Windows or macOS)
+- [Rhino 8.27 or later](https://www.rhino3d.com/) (Windows or macOS). MetaMAP is a `net8.0`
+  assembly, and Rhino releases before 8.27 host plug-ins on .NET 7, which cannot load it.
 - [Grasshopper](https://www.grasshopper3d.com/)
 
-Only `MetaMAP.gha`, `Newtonsoft.Json.dll`, the `Templates` folder and the package icon are
-shipped. Rhino provides Eto, System.Drawing and Windows Forms on both platforms; do **not** copy
-other assemblies next to the plugin, that breaks loading on macOS ("Ribbon could not be populated").
+Only `MetaMAP.gha`, `MetaMAP.Core.dll`, `Newtonsoft.Json.dll`, `LICENSE.md`, the `Templates`
+folder and the package icon are shipped. Rhino provides Eto, System.Drawing and Windows Forms on
+both platforms; do **not** copy other assemblies next to the plugin, that breaks loading on macOS
+("Ribbon could not be populated").
 
 ## Building from source
 
 ```bash
-dotnet build MetaMAP.csproj -c Release -f net7.0
+dotnet build MetaMAP.csproj -c Release -f net8.0
 ```
 
-The build writes the package contents to `bin/Release/net7.0/dist`.
+The build writes the package contents to `bin/Release/net8.0/dist`.
 When a Grasshopper `Libraries` folder exists on the machine (macOS:
 `~/Library/Application Support/McNeel/Rhinoceros/8.0/Plug-ins/Grasshopper (b45a29b1-...)/Libraries`,
 Windows: `%APPDATA%\Grasshopper\Libraries`), the build also writes a `MetaMAP.ghlink` there

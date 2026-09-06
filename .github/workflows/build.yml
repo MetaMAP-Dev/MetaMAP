@@ -27,25 +27,28 @@ jobs:
         with:
           dotnet-version: "8.0.x"
 
-      - name: Build (cross-platform net7.0 assembly)
-        run: dotnet build MetaMAP.csproj -c Release -f net7.0 -warnaserror:CS0618
+      - name: Build (cross-platform net8.0 assembly)
+        run: dotnet build MetaMAP.csproj -c Release -f net8.0 -warnaserror:CS0618
 
       - name: Check that only the intended files are shipped
         id: version
         run: |
-          ls -la bin/Release/net7.0/dist
-          test -f bin/Release/net7.0/dist/MetaMAP.gha
-          test -f bin/Release/net7.0/dist/Newtonsoft.Json.dll
-          test -f bin/Release/net7.0/dist/manifest.yml
-          test -f bin/Release/net7.0/dist/version.txt
-          test -d bin/Release/net7.0/dist/Templates
+          ls -la bin/Release/net8.0/dist
+          test -f bin/Release/net8.0/dist/MetaMAP.gha
+          test -f bin/Release/net8.0/dist/MetaMAP.Core.dll
+          test -f bin/Release/net8.0/dist/Newtonsoft.Json.dll
+          test -f bin/Release/net8.0/dist/manifest.yml
+          test -f bin/Release/net8.0/dist/version.txt
+          # GPLv3 section 4: the license must accompany every conveyed copy.
+          test -f bin/Release/net8.0/dist/LICENSE.md
+          test -d bin/Release/net8.0/dist/Templates
           # Rhino provides these; shipping them breaks loading on macOS.
           for forbidden in Eto.dll System.Drawing.Common.dll RhinoCommon.dll Grasshopper.dll System.Windows.Forms.dll; do
-            if [ -f "bin/Release/net7.0/dist/$forbidden" ]; then echo "$forbidden must not be shipped"; exit 1; fi
+            if [ -f "bin/Release/net8.0/dist/$forbidden" ]; then echo "$forbidden must not be shipped"; exit 1; fi
           done
           # manifest.yml and the assembly must agree on the version.
           manifest=$(grep -E '^version:' manifest.yml | awk '{print $2}')
-          built=$(cat bin/Release/net7.0/dist/version.txt | tr -d '[:space:]')
+          built=$(cat bin/Release/net8.0/dist/version.txt | tr -d '[:space:]')
           echo "manifest=$manifest built=$built"
           test "$manifest" = "$built"
           echo "version=$built" >> "$GITHUB_OUTPUT"
@@ -72,21 +75,23 @@ jobs:
           DOTNET_ROLL_FORWARD: Major
 
       - name: Build the Yak package
-        working-directory: bin/Release/net7.0/dist
+        working-directory: bin/Release/net8.0/dist
         env:
           DOTNET_ROLL_FORWARD: Major
         run: |
           yak build
           ls -la *.yak
           # The distribution tag decides which Rhino versions see the package: it must be
-          # "rh8_0-any" (Rhino 8.0+, Windows and Mac). A newer tag means the Grasshopper
-          # NuGet reference in MetaMAP.csproj was bumped past the 8.0 release.
-          ls *.yak | grep -q -- '-rh8_0-any\.yak$' || { echo "unexpected distribution tag"; exit 1; }
+          # "rh8_27-any" (Rhino 8.27 and later, Windows and Mac). The floor is 8.27 because the
+          # assembly targets net8.0 and earlier Rhino 8 releases host plug-ins on .NET 7, which
+          # cannot load it. A different tag means the Grasshopper NuGet reference in
+          # MetaMAP.csproj moved and the compatibility floor moved with it.
+          ls *.yak | grep -q -- '-rh8_27-any\.yak$' || { echo "unexpected distribution tag"; exit 1; }
 
       - uses: actions/upload-artifact@v4
         with:
           name: MetaMAP-yak
-          path: bin/Release/net7.0/dist/*.yak
+          path: bin/Release/net8.0/dist/*.yak
 
   release:
     needs: build
