@@ -30,13 +30,25 @@
     <ItemGroup>
         <!-- Rhino / Grasshopper API (compile-time only; Rhino supplies them at runtime).
              The Yak package inherits its minimum Rhino version from this reference, so this pin
-             is the plug-in's compatibility floor. 8.27 rather than 8.0 because the assembly
-             targets net8.0 and early Rhino 8 releases host plug-ins on .NET 7, which cannot load
-             it. Same pin Eddy3D ships against. -->
+             is the plug-in's compatibility floor.
+
+             8.27 is not a preference, it is the lowest version that works. Rhino 8.19 and older
+             host plug-ins on .NET 7 and cannot load a net8.0 assembly at all, so the floor could
+             not be below 8.20 regardless. Of the stable packages above that (8.21, 8.23, 8.24,
+             8.25, 8.26) every one fails this build with NETSDK1073 - their targets pull a
+             WindowsDesktop FrameworkReference that does not resolve for a plain net8.0 build on
+             macOS. Setting EnableWindowsTargeting=true makes them build, but it also drags
+             System.Drawing.Common and System.Windows.Forms up to 8.0.0.0, which is exactly the
+             runtime mismatch the reference below exists to avoid. 8.27 builds without the flag
+             and emits 7.0.0.0. -->
         <PackageReference Include="Grasshopper" Version="8.27.26019.16021" IncludeAssets="compile;build" />
         <!-- System.Drawing types used by the Grasshopper API (icons, canvas rendering). Compile-time
              only: Rhino ships its own System.Drawing.Common on both platforms. -->
-        <PackageReference Include="System.Drawing.Common" Version="8.0.0" ExcludeAssets="runtime" />
+        <!-- 7.0.0, NOT 8.0.0, even though this assembly targets net8.0. Rhino 8.32 ships
+             System.Drawing.Common at assembly version 7.0.0.0 and RhinoCommon itself references
+             7.0.0.0; .NET binds forward only, so a reference to 8.0.0.0 cannot be satisfied at
+             runtime and the .gha fails to load. Same pin Eddy3D uses on net8.0. -->
+        <PackageReference Include="System.Drawing.Common" Version="7.0.0" ExcludeAssets="runtime" />
         <!-- Shipped next to the .gha (see Distribution target). -->
         <PackageReference Include="Newtonsoft.Json" Version="13.0.3" GeneratePathProperty="true" />
     </ItemGroup>
@@ -49,10 +61,13 @@
     <!-- GH_Component's menu API (AppendAdditionalComponentMenuItems) is typed against
          System.Windows.Forms regardless of platform. Reference the compile-time-only reference
          assemblies; at runtime Rhino/Grasshopper itself supplies the real implementation on both
-         Windows and Mac. See https://discourse.mcneel.com/t/windows-forms-on-gh-and-rhino-8/171307 -->
+         Windows and Mac. See https://discourse.mcneel.com/t/windows-forms-on-gh-and-rhino-8/171307
+         The 7.0 reference assemblies are deliberate on a net8.0 target: Rhino ships
+         System.Windows.Forms at assembly version 7.0.0.0, and a reference to 8.0.0.0 would not
+         bind at runtime. -->
     <ItemGroup>
-        <PackageReference Include="Microsoft.WindowsDesktop.App.Ref" Version="8.0.0" GeneratePathProperty="true" ExcludeAssets="all" />
-        <Reference Include="$(PkgMicrosoft_WindowsDesktop_App_Ref)\ref\net8.0\System.Windows.Forms.dll" Private="false" />
+        <PackageReference Include="Microsoft.WindowsDesktop.App.Ref" Version="7.0.0" GeneratePathProperty="true" ExcludeAssets="all" />
+        <Reference Include="$(PkgMicrosoft_WindowsDesktop_App_Ref)\ref\net7.0\System.Windows.Forms.dll" Private="false" />
     </ItemGroup>
 
     <!-- Icons, Leaflet script and stylesheet are plain manifest resources (see src/MetaResources.cs). -->
