@@ -100,15 +100,15 @@ package by hand (for example from a machine without GitHub access):
    cd bin/Release/net8.0/dist
    yak build
    ```
-   This produces `metamap-0.0.60-rh8_27-any.yak` — the `any` tag means one
+   This produces `metamap-0.0.61-rh8_27-any.yak` — the `any` tag means one
    package serves both Windows and Mac.
 
 3. **Push** (requires being logged in via `yak login`):
    ```bash
-   yak push metamap-0.0.60-rh8_27-any.yak
+   yak push metamap-0.0.61-rh8_27-any.yak
    ```
 
-Keep `manifest.yml`'s `version` in sync with `MetaMAP.csproj` on every release.
+Keep `manifest.yml`'s `version` in sync with `Directory.Build.props` on every release.
 
 ## Benefits
 
