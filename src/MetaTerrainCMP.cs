@@ -138,6 +138,8 @@ public class MetaTerrainCMP : GH_Component
             DA.SetData(3, $"Successfully processed terrain data. Location: {lat:F6}, {lon:F6}, Radius: {radius}m + {sampledRadius - radius:F0}m margin = {sampledRadius:F0}m sampled, Grid: {gridResolution}x{gridResolution} ({2 * sampledRadius / (gridResolution - 1):F0}m spacing), " +
                           $"Base elevation: {minElevation:F1}m a.s.l. Points: {(showPoints ? "Visible" : "Hidden")}. {string.Join(". ", log)}");
             DA.SetData(4, mesh);
+
+            MetaMap.Analytics.Analytics.TrackRun("Terrain", "fetch");
         }
         catch (Exception ex)
         {

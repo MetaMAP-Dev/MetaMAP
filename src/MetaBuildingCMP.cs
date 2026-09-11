@@ -163,6 +163,8 @@ public class MetaBuildingCMP : GH_Component
             DA.SetDataList(1, heights);
             DA.SetData(2, $"Successfully processed {breps.Count} buildings from OpenStreetMap ({terrainInfo}). " +
                           $"Location: {lat:F6}, {lon:F6}, Radius: {radius}m. {string.Join(". ", log)}");
+
+            MetaMap.Analytics.Analytics.TrackRun("Building", "fetch");
         }
         catch (Exception ex)
         {
