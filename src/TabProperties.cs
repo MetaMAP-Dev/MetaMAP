@@ -21,6 +21,10 @@ namespace MetaMAP
             // The category will be created when the first component is loaded
             // server.AddCategoryIcon("MetaMAP", icon);
 
+            // Privacy-first usage analytics (ported from Eddy3D) — tracks which ribbon tab is
+            // used, once per machine per day. See MetaMap.Analytics.Analytics for the opt-out.
+            MetaMap.Analytics.TabUsage.Install();
+
             return GH_LoadingInstruction.Proceed;
         }
     }
