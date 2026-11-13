@@ -472,10 +472,16 @@ public static class Analytics
                     ["url"] = url,
                     ["referrer"] = "https://archidynamics.com/",
                     ["title"] = title,
-                    ["name"] = eventName,
                     ["data"] = identifyData
                 }
             };
+
+            // Umami's schema is `name: string, optional`: an absent name passes, a null one is
+            // refused with HTTP 400, and a page view has no event name.
+            if (!string.IsNullOrEmpty(eventName))
+            {
+                identifyPayload["payload"]!["name"] = eventName;
+            }
 
             var identifyRequest = new HttpRequestMessage(HttpMethod.Post, Config.Endpoint);
             identifyRequest.Content =
